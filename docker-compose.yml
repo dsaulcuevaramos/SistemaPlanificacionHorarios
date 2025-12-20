@@ -1,0 +1,18 @@
+version: "1"
+
+services:
+  postgres:
+    image: postgres:alpine3.14
+    container_name: database-postgres
+    restart: always
+    environment:
+    - POSTGRES_PASSWORD=dc#2025
+    ports:
+    - 5439:5432
+    networks:
+    - sgpghu
+    
+networks:
+  sgpghu:
+    name: ms-dc
+

@@ -1,0 +1,44 @@
+EN MERMAID:
+
+
+graph TD
+    subgraph "Cliente"
+        Browser[Navegador Web<br>Usuario Final]
+        Vue[Frontend SPA<br>Vue.js 3 + Pinia + Tailwind]
+    end
+
+    subgraph "Servidor de Aplicaciones (Docker Host)"
+        Nginx[Nginx<br>Reverse Proxy & Web Server]
+        
+        subgraph "Backend API (FastAPI)"
+            FastAPI[API Gateway<br>FastAPI]
+            Auth[JWT Middleware<br>Seguridad & Multi-tenancy]
+            
+            subgraph "Módulos de Negocio (Services)"
+                M_Doc[Gestión Docentes]
+                M_Hor[Motor de Horarios<br>(Algoritmos)]
+                M_Rep[Gestor de Archivos<br>Pandas/Excel]
+            end
+            
+            ORM[SQLAlchemy<br>ORM Asíncrono]
+        end
+    end
+
+    subgraph "Capa de Datos"
+        DB[(PostgreSQL<br>Base de Datos Relacional)]
+        Files[Sistema de Archivos<br>Reportes CSV/XLS]
+    end
+
+    Browser -->|HTTPS| Nginx
+    Nginx -->|Serves Static| Vue
+    Vue -->|JSON / REST| Nginx
+    Nginx -->|Proxy Pass| FastAPI
+    FastAPI --> Auth
+    Auth --> M_Doc
+    Auth --> M_Hor
+    Auth --> M_Rep
+    
+    M_Doc --> ORM
+    M_Hor --> ORM
+    M_Rep --> Files
+    ORM -->|SQL| DB

@@ -1,0 +1,5 @@
+en el venv
+
+.\venv\Scripts\Activate
+pip install uvicorn passlib[bcrypt]
+pip install "fastapi[all]" uvicorn "sqlalchemy[asyncio]" asyncpg python-jose[cryptography] "passlib[bcrypt]"

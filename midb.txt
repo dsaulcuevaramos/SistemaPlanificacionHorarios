@@ -1,0 +1,262 @@
+EN DBDIAGRAM.IO
+
+
+//// ------------------------------------------------------
+//// SISTEMA DE GESTION DE HORARIOS - VERSION MAESTRA FINAL
+//// Incluye: Multi-tenancy + Reglas + Algoritmos + Tu Lógica Estricta
+//// ------------------------------------------------------
+
+// ==========================================
+// 1. CONFIGURACIÓN GLOBAL Y SEGURIDAD
+// ==========================================
+
+Table catalogo {
+  id integer [pk, increment]
+  nombre_tabla varchar(50) [not null, note: 'Ej: TIPO_DOCENTE, TIPO_AULA, TIPO_EXAMEN']
+  codigo varchar(20) [not null, note: 'Ej: NOM, CONTR, PARCIAL']
+  descripcion varchar(100) [not null]
+  orden integer
+  estado integer [default: 1]
+  Note: "Diccionario de Datos. Gobierna todos los desplegables."
+}
+
+Table escuela {
+  id integer [pk, increment]
+  nombre varchar(100) [note: "Administración, Contabilidad"]
+  facultad varchar(100)
+  estado integer [default: 1]
+}
+
+Table usuario {
+  id integer [pk, increment]
+  username varchar(50)
+  password varchar(255)
+  rol varchar(20) [note: 'ADMIN, DIRECTOR, SECRETARIA']
+  
+  // SEGURIDAD: El usuario solo ve data de su escuela
+  id_escuela integer [ref: > escuela.id] 
+  estado integer [default: 1]
+}
+
+// ==========================================
+// 2. ESTRUCTURA ACADÉMICA (ESTÁTICA)
+// ==========================================
+
+Table plan_estudio {
+  id integer [pk, increment]
+  codigo varchar(20) [note: "PLAN-BASE-ADM"]
+  nombre varchar(100)
+  anio_inicio integer
+  id_escuela integer [ref: > escuela.id]
+  estado integer [default: 1]
+}
+
+// NECESARIA: Para manejar mallas antiguas vs nuevas
+Table plan_version {
+  id integer [pk, increment]
+  codigo_version varchar(30) [note: 'V1-2021, V2-2023']
+  id_plan integer [ref: > plan_estudio.id]
+  fecha_vigencia date
+  estado integer [default: 1]
+}
+
+Table curso {
+  id integer [pk, increment]
+  codigo varchar(20)
+  nombre varchar(150)
+  ciclo integer [note: "1, 2, 3..."]
+  
+  // LOGICA NEGOCIO: Filtro rápido para apertura (Pares/Impares)
+  paridad varchar(10) [note: 'PAR, IMPAR, AMBOS'] 
+  
+  creditos integer
+  horas_teoricas integer
+  horas_practicas integer
+  
+  tipo_curso varchar(20) // Lógica -> catalogo
+  
+  id_plan_version integer [ref: > plan_version.id]
+  estado integer [default: 1]
+}
+
+Table curso_requisito{
+  id integer [pk, increment]
+  id_curso integer [ref :> curso.id]
+  id_curso_requisito integer [ref: > curso.id]
+  id_plan_version integer [ref: > plan_version.id]
+  tipo_requisto varchar(50)
+}
+
+
+
+// ==========================================
+// 3. RECURSOS HUMANOS Y REGLAS (EL CEREBRO)
+// ==========================================
+
+Table docente {
+  id integer [pk, increment]
+  dni varchar(15) [unique]
+  nombre varchar(100)
+  apellido varchar(100)
+  email varchar(100)
+  telefono varchar(20)
+  
+  tipo_docente varchar(20) // Lógica -> catalogo
+  
+  horas_maximas_semanales integer [note: "Tope base para el algoritmo"]
+  id_escuela integer [ref: > escuela.id]
+  estado integer [default: 1]
+}
+
+// VALIDACIÓN: ¿Tiene contrato vigente?
+Table contrato_docente {
+  id integer [pk, increment]
+  id_docente integer [ref: > docente.id]
+  fecha_inicio date
+  fecha_fin date
+  horas_tope_semanales integer [note: "Sobrescribe el tope base si existe"]
+  turnos_preferidos varchar(50) [note: 'Ej: "M,N" (Mañana, Noche)']
+  estado integer [default: 1]
+}
+
+// ALGORITMO: Reglas complejas para la autogeneración
+Table restriccion {
+  id integer [pk, increment]
+  tipo varchar(50) [note: 'MAX_HORAS_DIA, CRUCE_AULA, DISPONIBILIDAD']
+  entidad_referencia varchar(50) [note: 'DOCENTE, AULA, CURSO']
+  id_entidad integer [note: 'ID específico si aplica']
+  
+  regla_json json [note: 'Ej: {"max": 6, "dias_prohibidos": ["Lunes"]}'] 
+  
+  peso integer [default: 100] // Prioridad (Hard/Soft constraint)
+  estado integer [default: 1]
+}
+
+// ==========================================
+// 4. PROGRAMACIÓN ACADÉMICA (DINÁMICA)
+// ==========================================
+
+Table periodo_academico {
+  id integer [pk, increment]
+  codigo varchar(20) [note: "2025-I, 2025-II"]
+  fecha_inicio date
+  fecha_fin date
+  estado integer [note: "1=Activo"]
+}
+
+// FILTRO: ¿Qué profes están disponibles ESTE ciclo?
+Table disponibilidad_docente {
+  id integer [pk, increment]
+  id_docente integer [ref: > docente.id]
+  id_periodo integer [ref: > periodo_academico.id]
+  horas_asignadas_actuales integer [default: 0]
+  estado integer [default: 1]
+}
+
+// FILTRO: ¿Qué cursos se abren ESTE ciclo? (Según paridad)
+Table curso_aperturado {
+  id integer [pk, increment]
+  id_curso integer [ref: > curso.id]
+  id_periodo integer [ref: > periodo_academico.id]
+  cupos_proyectados integer
+  estado integer [default: 1]
+}
+
+// LA ENTIDAD CENTRAL
+Table grupo {
+  id integer [pk, increment]
+  nombre varchar(30) [note: "Grupo A, Grupo B"]
+  vacantes integer
+  
+  id_curso_aperturado integer [ref: > curso_aperturado.id]
+  
+  // TU REGLA ESTRICTA: 1 Grupo = 1 Docente Único
+  id_docente integer [ref: > docente.id, null]
+  
+  // ESCALABILIDAD: El turno define el filtro de horas para este grupo
+  id_turno integer [ref: > turno.id] 
+  
+  estado integer [default: 1]
+}
+
+// ==========================================
+// 5. INFRAESTRUCTURA Y TIEMPO (DEFINICIONES)
+// ==========================================
+
+Table aula {
+  id integer [pk, increment]
+  nombre varchar(50) [note: "Aula 101"]
+  pabellon varchar(20)
+  aforo integer
+  tipo_aula varchar(20) // Lógica -> catalogo
+  recursos json [note: '["Proyector", "Aire Acond."]']
+  id_escuela integer [ref: > escuela.id]
+  estado integer [default: 1]
+}
+
+Table turno {
+  id integer [pk, increment]
+  nombre varchar(50) [note: "Mañana, Tarde, Noche"]
+  hora_inicio time
+  hora_fin time
+  id_version integer [ref: > plan_version.id]
+  estado integer [default: 1]
+}
+
+// DEFINICIÓN DEL TIEMPO (El Menú)
+Table bloque_horario {
+  id integer [pk, increment]
+  dia_semana varchar(15) [note: "Lunes, Martes..."]
+  hora_inicio time
+  hora_fin time
+  id_turno integer [ref: > turno.id] // Clasificador
+  orden integer [note: "1, 2, 3..."]
+  estado integer [default: 1]
+}
+
+// ==========================================
+// 6. HORARIOS DE CLASES (GRID SEMANAL)
+// ==========================================
+
+Table sesion {
+  id integer [pk, increment]
+  tipo_sesion varchar(20) [note: 'TEORIA, PRACTICA'] // Lógica -> catalogo
+  duracion_horas integer
+  
+  // VINCULACIÓN ÚNICA: Hereda el docente del Grupo
+  id_grupo integer [ref: > grupo.id]
+  
+  estado integer [default: 1]
+}
+
+Table horario {
+  id integer [pk, increment]
+  id_sesion integer [ref: > sesion.id]
+  id_bloque integer [ref: > bloque_horario.id] // Cuándo
+  id_aula integer [ref: > aula.id]             // Dónde
+  
+  // Optimización para consultas rápidas
+  id_periodo integer [ref: > periodo_academico.id] 
+  
+  estado integer [default: 1]
+}
+
+// ==========================================
+// 7. HORARIOS DE EXÁMENES (SATÉLITE)
+// ==========================================
+
+Table horario_examen {
+  id integer [pk, increment]
+  fecha date [note: "Fecha específica"]
+  hora_inicio time
+  hora_fin time
+  
+  tipo_examen varchar(20) // Lógica -> catalogo (PARCIAL, FINAL)
+  
+  id_curso_aperturado integer [ref: > curso_aperturado.id]
+  id_grupo integer [ref: > grupo.id, null] // Opcional
+  id_aula integer [ref: > aula.id]
+  
+  estado integer [default: 1]
+}
+

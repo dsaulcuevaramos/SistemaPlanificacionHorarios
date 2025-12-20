@@ -1,0 +1,18 @@
+:root {
+    --primary: #3b82f6;
+    --primary-dark: #2563eb;
+    --secondary: #64748b;
+    --background: #f1f5f9;
+    --sidebar-bg: #1e293b;
+    --sidebar-hover: #334155;
+    --text-main: #1e293b;
+    --text-light: #cbd5e1;
+    --danger: #ef4444;
+    --success: #22c55e;
+}
+
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--background);
+}
