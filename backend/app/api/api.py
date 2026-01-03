@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.api.endpoints import auth, catalogo, usuario                       #esto es todo lo que tiene que ver con auth
+from app.api.endpoints import escuela
 from app.api.endpoints import plan_estudio,plan_version,curso               #esto es todo lo que tiene que ver con cursos
 from app.api.endpoints import docente                   #esto es todo lo que tiene que ver con docentes
 from app.api.endpoints import aula,turno 
@@ -9,7 +10,6 @@ from app.api.endpoints import curso_aperturado
 from app.api.endpoints import contratos
 
 from app.api.endpoints import horarios
-from app.api.endpoints import gestion_horarios
 from app.api.endpoints import grupos
 api_router = APIRouter()
 
@@ -19,7 +19,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["Autenticación"])
 api_router.include_router(catalogo.router, prefix="/catalogo", tags=["Catálogos"])
 api_router.include_router(usuario.router, prefix="/usuarios", tags=["Usuarios"]) 
-
+api_router.include_router(escuela.router, prefix="/escuelas", tags=["escuelas"])
 # Mod cursos
 api_router.include_router(plan_estudio.router, prefix="/planes", tags=["Planes de Estudio"])
 api_router.include_router(plan_version.router, prefix="/versiones", tags=["Planes de Estudio"])
