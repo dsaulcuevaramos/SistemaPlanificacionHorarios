@@ -1,7 +1,8 @@
 import axios from 'axios';
 
 const api = axios.create({
-    baseURL: 'http://127.0.0.1:8000/api/v1', // Ajusta tu base URL si es diferente
+    //baseURL: 'http://127.0.0.1:8000/api/v1', // Ajusta tu base URL si es diferente
+    baseURL: 'http://5.161.126.165:8000/api/v1', // Ajusta tu base URL si es diferente
     headers: {
         'Accept': 'application/json',       // 'Content-Type': 'multipart/form-data'
     }
