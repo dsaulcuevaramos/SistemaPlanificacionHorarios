@@ -22,4 +22,3 @@ class Grupo(Base, BaseMixin):
     turno = relationship("Turno", back_populates="grupos")
     sesiones = relationship("Sesion", back_populates="grupo")
     examenes = relationship("HorarioExamen", back_populates="grupo")
- 

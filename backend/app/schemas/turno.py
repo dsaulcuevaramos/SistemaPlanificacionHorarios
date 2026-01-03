@@ -44,5 +44,3 @@ class BloqueHorarioResponse(BloqueHorarioBase):
     class Config:
         from_attributes = True
 
-
-

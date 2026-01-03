@@ -83,7 +83,7 @@ const handleLogout = () => { authStore.logout(); };
             @click="toggleMenu('Gestion Horarios')" 
             :class="{ 'active': openMenus.programacion }"
           >
-            <div class="left" @click.stop="navigateTo('/GestionBloques')"> 
+            <div class="left" @click.stop="navigateTo('/gestion-horarios')"> 
                 <span class="icon">📆</span> 
                 <span class="text" v-if="isSidebarOpen">Gestion Horarios</span>
             </div>

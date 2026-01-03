@@ -1,4 +1,3 @@
-EN DBDIAGRAM.IO
 
 
 //// ------------------------------------------------------
@@ -199,7 +198,7 @@ Table turno {
   nombre varchar(50) [note: "Mañana, Tarde, Noche"]
   hora_inicio time
   hora_fin time
-  id_version integer [ref: > plan_version.id]
+  id_escuela integer [ref: > escuela.id]
   estado integer [default: 1]
 }
 
@@ -260,3 +259,5 @@ Table horario_examen {
   estado integer [default: 1]
 }
 
+
+Ref: "disponibilidad_docente"."id" < "disponibilidad_docente"."estado"

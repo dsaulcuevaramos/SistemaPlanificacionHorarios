@@ -10,7 +10,7 @@ class MallaGrafoService:
     """
     Servicio encargado de consultar la malla curricular y transformarla
     en una estructura de nodos y aristas para la visualización gráfica (Vue Flow).
-    """
+    """ 
 
     async def get_malla_data(
         self, 

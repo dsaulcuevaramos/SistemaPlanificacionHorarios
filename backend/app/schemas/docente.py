@@ -2,17 +2,6 @@ from typing import Optional, List
 from pydantic import BaseModel, EmailStr
 from datetime import date
 
-# Schemas de Tablas Relacionadas (Solo para anidamiento en la respuesta final)
-
-class ContratoDocenteBase(BaseModel):
-    fecha_inicio: date
-    fecha_fin: date
-    horas_tope_semanales: Optional[int] = None
-    turnos_preferidos: str
-
-class DisponibilidadDocenteBase(BaseModel):
-    id_periodo: int
-    horas_asignadas_actuales: int
 
 # Schema principal: Docente
 class DocenteBase(BaseModel):
@@ -42,10 +31,6 @@ class DocenteUpdate(DocenteBase):
 class DocenteResponse(DocenteBase):
     id: int
     estado: int
-    
-    # Opcional: Para ver los contratos y disponibilidad directamente
-    contratos: List[ContratoDocenteBase] = []
-    # disponibilidad: List[DisponibilidadDocenteBase] = [] # Se añade al listar el perfil
 
     class Config:
         from_attributes = True

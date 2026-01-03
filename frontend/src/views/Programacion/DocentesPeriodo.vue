@@ -7,11 +7,16 @@ import Swal from 'sweetalert2';
 import docenteService from '../../api/docenteService';
 import contratoService from '../../api/contratoService';
 import turnoService from '../../api/turnoService'; // [NUEVO] Importamos el servicio de turnos
+import periodoService from '../../api/periodoService';
 
 const route = useRoute();
 const router = useRouter();
 const idPeriodo = route.params.id;
 const periodoActual = ref(null);
+
+const periodosAnteriores = ref([]);
+const idPeriodoAnteriorSel = ref(null);
+const showRenovarModal = ref(false);
 
 // --- ESTADO ---
 const docentes = ref([]);
@@ -33,6 +38,7 @@ const form = ref({
     turnos_preferidos: '' // Inicializamos vacío para obligar a seleccionar
 });
 
+
 // --- CARGA DE DATOS ---
 const initData = async () => {
     loading.value = true;
@@ -48,13 +54,14 @@ const initData = async () => {
         disponibilidad.value = dispResp;
         listaTurnos.value = turnosResp; // Guardamos los turnos
 
+        try {
+          const todosPeriodos = await periodoService.getAll();
+          // Filtramos para que solo muestre periodos distintos al actual
+          periodosAnteriores.value = todosPeriodos.filter(p => p.id != idPeriodo);
+        } catch(e) { console.error(e); }
+
         // 2. Cargamos el periodo por separado (para no romper todo si falla)
         try {
-            const perResp = await docenteService.getPeriodo(idPeriodo); // Asumiendo que usas api.get directo o un servicio
-            // Nota: En tu código anterior usabas api.get directo, aquí lo mantengo robusto
-            // Si no tienes el método en service, usa axios directo como tenías:
-            // const perResp = await api.get(`/periodos/${idPeriodo}`);
-            // Pero para este ejemplo asumiré que viene en el response o usaremos el api importado si es necesario.
             // Para ser fiel a tu código anterior:
             const { default: api } = await import('../../api/axios'); // Import dinámico o usar el import arriba si ya lo tienes
             const perRespAxios = await api.get(`/periodos/${idPeriodo}`);
@@ -108,6 +115,27 @@ const openContratarModal = (docente) => {
 
     showModal.value = true;
 };
+
+
+const handleRenovacionMasiva = async () => {
+    if (!idPeriodoAnteriorSel.value) return Swal.fire('Error', 'Seleccione un periodo fuente', 'warning');
+    
+    loading.value = true;
+    try {
+        await contratoService.renovarMasivo({
+            id_periodo_anterior: idPeriodoAnteriorSel.value,
+            id_periodo_nuevo: parseInt(idPeriodo)
+        });
+        Swal.fire('Éxito', 'Docentes importados correctamente', 'success');
+        showRenovarModal.value = false;
+        await initData(); // Recargamos la tabla
+    } catch (e) {
+        Swal.fire('Error', 'Falló la renovación masiva', 'error');
+    } finally {
+        loading.value = false;
+    }
+};
+
 
 const handleGuardarContrato = async () => {
     if (!form.value.turnos_preferidos) {
@@ -182,14 +210,42 @@ const irAtras = () => router.back();
 
     <div class="toolbar">
       <div class="search-container">
-        <span class="search-icon">🔍</span>
-        <input v-model="searchTerm" type="text" placeholder="Buscar por nombre o DNI..." class="search-input" />
-      </div>
-      <div class="stats">
-        <span class="pill">Escuela: {{ docentes.length }}</span>
-        <span class="pill pill-success">Asignados: {{ disponibilidad.length }}</span>
+        </div>
+      
+      <div class="actions-right">
+          <button @click="showRenovarModal = true" class="btn-secondary">
+              🔄 Traer del Ciclo Pasado
+          </button>
+          
+          <div class="stats">
+              <span class="pill">Total: {{ docentes.length }}</span>
+              <span class="pill pill-success">Contratados: {{ disponibilidad.length }}</span>
+          </div>
       </div>
     </div>
+
+
+    <div v-if="showRenovarModal" class="modal-backdrop" @click.self="showRenovarModal = false">
+      <div class="modal-panel small-modal">
+          <div class="modal-header">
+              <h3>Renovación Masiva</h3>
+              <button class="close-btn" @click="showRenovarModal = false">&times;</button>
+          </div>
+          <div class="modal-body">
+              <p style="margin-bottom:1rem; color:#64748b;">Seleccione el periodo del cual desea copiar la lista de docentes contratados:</p>
+              <select v-model="idPeriodoAnteriorSel" class="full-width-select">
+                  <option :value="null">-- Seleccionar Periodo Anterior --</option>
+                  <option v-for="p in periodosAnteriores" :key="p.id" :value="p.id">{{ p.codigo || p.nombre }}</option>
+              </select>
+          </div>
+          <div class="modal-footer">
+              <button @click="handleRenovacionMasiva" class="btn-primary-modal">
+                  Importar Docentes
+              </button>
+          </div>
+      </div>
+    </div>
+
 
     <div class="table-container">
       <table class="data-table">
@@ -418,5 +474,21 @@ const irAtras = () => router.back();
 @keyframes modalSlideUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.actions-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.full-width-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+.small-modal {
+    max-width: 400px !important;
 }
 </style>

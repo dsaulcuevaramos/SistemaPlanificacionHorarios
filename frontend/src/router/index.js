@@ -4,15 +4,27 @@ import { useAuthStore } from '../stores/authStore';
 // Layouts
 import MainLayout from '../layouts/MainLayout.vue';
 
-// Vistas
+// --- VISTAS GENERALES ---
 import LoginView from '../views/LoginView.vue';
 import RecuperarView from '../views/RecoveryView.vue';
 import DashboardHome from '../views/DashboardHomeView.vue'; 
+
+// --- VISTAS PROGRAMACIÓN ---
 import PeriodoMenu from '../views/Programacion/PeriodoMenu.vue';
+import CursosPeriodo from '../views/Programacion/CursosPeriodo.vue';
+import DocentesPeriodo from '../views/Programacion/DocentesPeriodo.vue';
+import GrupoPeriodo from '../views/Programacion/GrupoPeriodo.vue';
+
+// --- VISTAS GESTIÓN DE HORARIOS (Corregidas) ---
+// Asegúrate de que los archivos existan en estas rutas exactas
+import GestionDashboardView from '../views/Gestion/GestionDashboardView.vue';
+import GenerarBloquesView from '../views/Gestion/BloquesView.vue'; // O GenerarBloquesView.vue según como guardaste el archivo
+import GestionHorarioMainView from '../views/Gestion/GestionHorarioMainView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    // 1. Login y Recuperación (Públicas)
     {
       path: '/login',
       name: 'login',
@@ -24,6 +36,8 @@ const router = createRouter({
       name: 'recovery',
       component: RecuperarView,  
     },
+
+    // 2. Layout Principal (Protegido)
     {
       path: '/',
       name: 'MainLayout',
@@ -36,7 +50,9 @@ const router = createRouter({
           component: DashboardHome
         },
 
-        // --- MÓDULO PLANIFICACIÓN ---
+        // ==========================================
+        // MÓDULO PLANIFICACIÓN
+        // ==========================================
         {
           path: '/planificacion',
           name: 'planificacion_dashboard',
@@ -68,64 +84,63 @@ const router = createRouter({
           component: () => import('../views/TurnosView.vue'),
         },
 
-
-
-        //// ---------------------------------------------------------------------------
+        // ==========================================
+        // MÓDULO PROGRAMACIÓN ACADÉMICA
+        // ==========================================
         {
           path: '/programacion',
           name: 'programacion',
           component: () => import('../views/Programacion/ProgramacionView.vue'),
         },
-
         {
-            // Esta ruta captura el ID del periodo (ej: /programacion/periodo/1)
-            path: '/Programacion/periodo/:id',
-            name: 'PeriodoMenu',
-            component: PeriodoMenu,
-            meta: { requiresAuth: true }
-          },
-          {
-            // Ruta para la opción 1: Cursos
-            path: '/programacion/periodo/:id/cursos',
-            name: 'CursosPeriodo',
-            component: () => import('../views/Programacion/CursosPeriodo.vue') // Lazy load
-          },
-          {
-            // Ruta para la opción 2: Docentes
-            path: '/programacion/periodo/:id/docentes',
-            name: 'DocentesPeriodo',
-            component: () => import('../views/Programacion/DocentesPeriodo.vue') // Lazy load
-          },
-          {
-            path: '/programacion/periodo/:id/cursos',
-            name: 'CursosPeriodo',
-            // COINCIDIR MAYÚSCULAS/MINÚSCULAS AQUÍ:
-            component: () => import('../views/Programacion/CursosPeriodo.vue') 
-          },
+          path: '/programacion/periodo/:id',
+          name: 'PeriodoMenu',
+          component: PeriodoMenu,
+        },
+        {
+          path: '/programacion/periodo/:id/cursos',
+          name: 'CursosPeriodo',
+          component: CursosPeriodo
+        },
+        {
+          path: '/programacion/periodo/:id/docentes',
+          name: 'DocentesPeriodo',
+          component: DocentesPeriodo
+        },
+        {
+          path: '/programacion/periodo/:id/grupos',
+          name: 'GruposPeriodo',
+          component: GrupoPeriodo
+        },
 
-
-          {
-            path: '/programacion/periodo/:id/docentes',
-            name: 'DocentesPeriodo',
-            // COINCIDIR MAYÚSCULAS/MINÚSCULAS AQUÍ:
-            component: () => import('../views/Programacion/DocentesPeriodo.vue')
-          },
-
-
-
-          {
-            path: '/GestionBloques',
-            name: 'GestionHorarios',
-            // COINCIDIR MAYÚSCULAS/MINÚSCULAS AQUÍ:
-            component: () => import('../views/Gestion/BloquesView.vue')
-          }
-
-          
-
+        // ==========================================
+        // MÓDULO GESTIÓN DE HORARIOS (NUEVO)
+        // ==========================================
+        {
+          path: '/gestion-horarios',
+          name: 'gestion-dashboard',
+          component: GestionDashboardView,
+          meta: { title: 'Gestión de Horarios' }
+        },
+        {
+          path: '/gestion-horarios/configurar-bloques',
+          name: 'configurar-bloques',
+          component: GenerarBloquesView,
+          meta: { title: 'Configurar Bloques' }
+        },
+        {
+          // Esta ruta recibe el ID del periodo para cargar grupos y horarios
+          path: '/gestion-horarios/periodo/:id_periodo/asignacion',
+          name: 'asignacion-horarios',
+          component: GestionHorarioMainView,
+          props: true, // ¡IMPORTANTE! Esto pasa el parametro :id_periodo como prop al componente
+          meta: { title: 'Asignación de Horarios' }
+        }
       ]
     }
   ]
 });
+
 
 router.beforeEach((to, from, next) => {
     const authStore = useAuthStore();

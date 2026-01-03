@@ -52,7 +52,7 @@ const navigateTo = (path) => router.push(path);
         </div>
       </div>
       
-      <div class="dashboard-card card-management" @click="navigateTo('/GestionBloques')">
+      <div class="dashboard-card card-management" @click="navigateTo('/gestion-horarios')">
         <div class="card-icon-bg">📊</div>
         <div class="card-body">
           <h3>GESTIÓN DE HORARIOS</h3>

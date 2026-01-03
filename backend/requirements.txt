@@ -1,0 +1,11 @@
+fastapi[all]
+uvicorn
+sqlalchemy[asyncio]
+asyncpg
+pydantic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+openpyxl
+pandas
+bcrypt==3.2.0

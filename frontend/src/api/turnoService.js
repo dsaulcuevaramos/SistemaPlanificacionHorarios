@@ -3,7 +3,6 @@ import api from './axios'; // Tu instancia configurada con interceptores
 const ENDPOINT = '/turnos';
 
 /*
-
 // Obtener turnos por ID de Versión
 const getByVersion = async (versionId) => {
     try {
@@ -13,9 +12,7 @@ const getByVersion = async (versionId) => {
     } catch (error) {
         console.error("Error al obtener turnos de la versión:", error);
         throw error;
-    }
-};
-
+    }};
 // Crear un nuevo turno
 const create = async (turnoData) => {
     try {
@@ -26,9 +23,7 @@ const create = async (turnoData) => {
         // Manejo de error consistente con tu servicio de cursos
         console.error("Error al crear turno:", error.response?.data?.detail || error.message);
         throw error;
-    }
-};
-
+    }};
 // Eliminar un turno
 const remove = async (id) => {
     try {
@@ -37,14 +32,8 @@ const remove = async (id) => {
     } catch (error) {
         console.error("Error al eliminar turno:", error.response?.data?.detail || error.message);
         throw error;
-    }
-};
-
-export default {
-    getByVersion,
-    create,
-    remove
-};
+    }}
+export default {getByVersion,create,remove};
 */
 
 export default {

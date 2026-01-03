@@ -8,7 +8,7 @@ class Horario(Base, BaseMixin):
     
     id_sesion = Column(Integer, ForeignKey('sesion.id'), nullable=False)
     id_bloque = Column(Integer, ForeignKey('bloque_horario.id'), nullable=False)
-    id_aula = Column(Integer, ForeignKey('aula.id'), nullable=False)
+    id_aula = Column(Integer, ForeignKey('aula.id'), nullable=True)
     id_periodo = Column(Integer, ForeignKey('periodo_academico.id'), nullable=False)
     
     # Relaciones

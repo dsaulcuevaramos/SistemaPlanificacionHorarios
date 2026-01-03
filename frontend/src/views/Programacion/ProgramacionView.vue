@@ -9,7 +9,7 @@ const router = useRouter();
 // ---------------------------------------------------------
 // 1. ESTADO LIMPIO (Sin datos falsos)
 // ---------------------------------------------------------
-const periodos = ref([]); // <--- ¡Asegúrate de que esto esté VACÍO!
+const periodos = ref([]); 
 const loading = ref(true);
 const searchTerm = ref('');
 const showModal = ref(false);
@@ -29,7 +29,7 @@ const cargarPeriodos = async () => {
     console.log("Pidiendo periodos al backend...");
     const data = await periodoService.getAll();
     
-    console.log("Respuesta del Backend:", data); // <--- MIRA ESTO EN LA CONSOLA (F12)
+    console.log("Respuesta del Backend:", data);
     
     if (Array.isArray(data)) {
       periodos.value = data.map(p => ({
@@ -296,7 +296,7 @@ const savePeriodo = async () => {
 
 /* NUEVO: Botón editar mini (Sutil) */
 .btn-edit-mini {
-    width: 28px; height: 28px;
+    width: 40px; height: 40px;
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     background-color: #f1f5f9; color: #94a3b8;

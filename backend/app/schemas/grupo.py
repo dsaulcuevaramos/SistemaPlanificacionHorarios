@@ -16,10 +16,20 @@ class GrupoUpdate(BaseModel):
     vacantes: Optional[int] = None
     id_docente: Optional[int] = None
     id_turno: Optional[int] = None
-    estado: Optional[int] = None
 
-class GrupoResponse(GrupoBase):
+class GrupoResponse(BaseModel):
     id: int
-    estado: int
+    nombre: str
+    vacantes: int
+    docente_nombre: Optional[str] = "Sin Asignar"
+    turno_nombre: str
     class Config:
         from_attributes = True
+
+# Esquema para la CREACIÓN MASIVA (La magia)
+class GrupoCreateMasivo(BaseModel):
+    id_curso_aperturado: int
+    id_docente: Optional[int] = None # Puede ser null si aún no defines al profe
+    id_turno: int
+    cantidad_grupos: int = 1         # Por defecto crea 1 (Grupo A)
+    vacantes_por_grupo: int = 40

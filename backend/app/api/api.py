@@ -10,6 +10,7 @@ from app.api.endpoints import contratos
 
 from app.api.endpoints import horarios
 from app.api.endpoints import gestion_horarios
+from app.api.endpoints import grupos
 api_router = APIRouter()
 
 #PLANIFICACION
@@ -38,5 +39,7 @@ api_router.include_router(curso_aperturado.router, prefix="/aperturas", tags=["A
 api_router.include_router(contratos.router, prefix="/contratos", tags=["Contratos Docentes"])
 
 api_router.include_router(horarios.router,  prefix="/horarios", tags=["Horarios"])
-api_router.include_router(gestion_horarios.router,  prefix="/gestion_horarios", tags=["Horarios"])
+#api_router.include_router(gestion_horarios.router,  prefix="/gestion_horarios", tags=["Horarios"])
+
+api_router.include_router(grupos.router, prefix="/grupos", tags=["grupos"])
 # api_router.include_router(escuela.router, prefix="/escuelas", tags=["Escuelas"])
