@@ -3,6 +3,7 @@ from app.models.base import Base, BaseMixin
 from app.models.escuela import Escuela
 from app.models.usuario import Usuario
 from app.models.catalogo import Catalogo
+from app.models.restriccion import Restriccion
 
 # modulo cursos y todo lo relacionado
 from app.models.plan_estudio import PlanEstudio

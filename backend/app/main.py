@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.api import api_router
 from app.core.database import engine
-from app.models import Base
+from app import models
 from contextlib import asynccontextmanager
 
 # 1. Inicializar la aplicación FastAPI
@@ -35,16 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+models.Base.metadata.create_all(bind=engine)
+
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/")
 async def root():
     return {"mensaje": "Sistema de Horarios UNU - API Activa"}
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("🔄 Iniciando sistema...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✅ Tablas listas.")
-    yield
-    print("🛑 Apagando...")
