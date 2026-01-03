@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.api import api_router
 from app.core.database import engine
-from app.models.base import Base
+from app.models import Base
 from contextlib import asynccontextmanager
 
 # 1. Inicializar la aplicación FastAPI
@@ -42,13 +42,9 @@ async def root():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🔄 Iniciando sistema y verificando tablas...")
-    
-    # Crea las tablas de forma asíncrona
+    print("🔄 Iniciando sistema...")
     async with engine.begin() as conn:
-        # run_sync permite ejecutar el comando síncrono de creación de tablas
         await conn.run_sync(Base.metadata.create_all)
-    
-    print("✅ Tablas verificadas/creadas exitosamente.")
+    print("✅ Tablas listas.")
     yield
-    print("🛑 Apagando sistema...")
+    print("🛑 Apagando...")
