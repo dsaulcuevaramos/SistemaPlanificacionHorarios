@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.api import api_router
 from app.core.database import engine
+from app.models.base import Base
 from app import models
 from contextlib import asynccontextmanager
 
@@ -35,8 +36,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-models.Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Log para que veas en consola que está intentando crear las tablas
+    print("Iniciando creación de tablas...")
+    async with engine.begin() as conn:
+        # run_sync es obligatorio para motores asíncronos
+        await conn.run_sync(Base.metadata.create_all)
+    print("Tablas creadas con éxito.")
+    yield
 
+# 2. Pasamos el lifespan al crear la App
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/")
