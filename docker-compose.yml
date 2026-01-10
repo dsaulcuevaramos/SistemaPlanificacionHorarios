@@ -7,7 +7,9 @@ services:
     container_name: database-postgres
     restart: always
     environment:
+      - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=dc#2025
+      - POSTGRES_DB=horarios_db
     ports:
       - "5439:5432"
     networks:
@@ -28,6 +30,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PYTHONPATH=/app
       - POSTGRES_SERVER=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_PASSWORD=dc#2025
