@@ -645,7 +645,7 @@ const descargarExcel = async () => {
     border: 1px solid #e2e8f0;
     
     /* --- CORRECCIÓN DE TAMAÑO --- */
-    flex: 0 0 550px;        /* ¡NO ENCOGER! Ancho fijo de 550px */
+    flex: 0 0 650px;        /* ¡NO ENCOGER! Ancho fijo de 550px */
     width: 550px;           
 }
 .malla-header { background: #1e293b; color: white; padding: 12px; text-align: center; font-weight: bold; letter-spacing: 0.5px; }
@@ -661,9 +661,9 @@ const descargarExcel = async () => {
 .session-item { 
     z-index: 10; 
     margin: 1px; /* Pequeño margen para ver si hay algo detrás */
-    padding: 6px; 
-    border-radius: 6px; 
-    font-size: 0.75rem; 
+    padding: 5%; 
+    border-radius: 5px; 
+    font-size: 0.8rem; 
     display: flex; 
     flex-direction: column; 
     justify-content: center; 
