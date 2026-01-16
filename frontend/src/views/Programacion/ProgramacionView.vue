@@ -109,6 +109,61 @@ const savePeriodo = async () => {
     loading.value = false;
   }
 };
+
+
+
+const abrirClonacion = async (periodoDestino) => {
+  // 1. Filtramos la lista para no clonar el periodo sobre sí mismo
+  // (Solo mostramos periodos DIFERENTES al destino)
+  const opcionesOrigen = {};
+  periodos.value.forEach(p => {
+    if (p.id !== periodoDestino.id) {
+      opcionesOrigen[p.id] = `${p.nombre} (${p.codigo})`;
+    }
+  });
+
+  if (Object.keys(opcionesOrigen).length === 0) {
+    Swal.fire('Atención', 'No hay otros periodos registrados para usar como origen.', 'warning');
+    return;
+  }
+
+  // 2. Mostrar Popup con Select
+  const { value: idOrigen } = await Swal.fire({
+    title: `Importar carga a ${periodoDestino.codigo}`,
+    text: "Selecciona el periodo anterior del cual quieres copiar cursos, docentes y grupos.",
+    input: 'select',
+    inputOptions: opcionesOrigen,
+    inputPlaceholder: 'Selecciona un periodo origen',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, clonar',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonText: 'Cancelar',
+    inputValidator: (value) => {
+      return !value && 'Debes seleccionar un periodo origen'
+    }
+  });
+
+  // 3. Ejecutar la clonación si el usuario confirmó
+  if (idOrigen) {
+    try {
+      Swal.fire({ title: 'Clonando...', text: 'Esto puede tardar unos segundos.', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      
+      // Llamada al servicio
+      await periodoService.clonar(idOrigen, periodoDestino.id);
+      
+      Swal.fire('¡Éxito!', 'La carga académica ha sido importada correctamente.', 'success');
+      
+      // Opcional: Recargar datos si fuera necesario, aunque la clonación es interna
+      // await cargarPeriodos(); 
+      
+    } catch (error) {
+      // Muestra el error que viene del backend (ej: "El periodo destino ya tiene cursos")
+      const mensaje = error.response?.data?.detail || 'Ocurrió un error al clonar.';
+      Swal.fire('Error', mensaje, 'error');
+    }
+  }
+};
+
 </script>
 
 <template>
@@ -162,14 +217,26 @@ const savePeriodo = async () => {
               <h3 class="text-xl font-bold text-gray-800 m-0">{{ periodo.codigo }}</h3>
               
               <button 
-                @click="openModal(periodo, $event)" 
+                @click.stop="openModal(periodo, $event)" 
                 class="btn-edit-mini"
-                title="Editar Periodo"
+                title="Editar Información del Periodo"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
               </button>
+
+              <button 
+                v-if="periodo.estado === 1"
+                @click.stop="abrirClonacion(periodo)" 
+                class="btn-edit-mini hover:text-indigo-600"
+                title="Importar/Clonar carga del ciclo pasado"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2m-4-1v8m0 0l3-3m-3 3L9 8" />
+                </svg>
+              </button>
+
             </div>
 
             <span class="text-xs font-semibold px-2 py-1 rounded border whitespace-nowrap" :class="getStatusColor(periodo.estadoVisual)">
@@ -301,10 +368,20 @@ const savePeriodo = async () => {
     display: flex; align-items: center; justify-content: center;
     background-color: #f1f5f9; color: #94a3b8;
     border: none; cursor: pointer; transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border-radius: 9999px;
+    color: #94a3b8; /* Gris suave por defecto */
+    transition: all 0.2s;
 }
+
 .btn-edit-mini:hover {
-    background-color: #e0f2fe; color: #0284c7;
+  background-color: #f1f5f9;
+  color: #4f46e5; /* Azul índigo al pasar el mouse */
 }
+
 
 /* Footer Card */
 .card-footer { padding: 1rem 1.5rem; background-color: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; align-items: center; transition: 0.2s; }
@@ -328,6 +405,7 @@ const savePeriodo = async () => {
 .form-group input:focus { border-color: #6366f1; outline: none; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .modal-footer { padding: 1.5rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; background: #f8fafc; }
+
 
 @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 </style>

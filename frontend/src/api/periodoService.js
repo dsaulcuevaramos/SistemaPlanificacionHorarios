@@ -42,9 +42,21 @@ const update = async (id, periodoData) => {
     }
 };
 
+const clonar = async (idOrigen, idDestino) => {
+    try {
+        // Llama al endpoint del backend: POST /periodos/clonar/{origen}/{destino}
+        const response = await api.post(`${ENDPOINT}/clonar/${idOrigen}/${idDestino}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error al clonar periodo:", error);
+        throw error;
+    }
+};
+
 export default {
     getAll,
     getById, // <--- NO OLVIDES EXPORTARLO
     create,
-    update
+    update,
+    clonar
 };

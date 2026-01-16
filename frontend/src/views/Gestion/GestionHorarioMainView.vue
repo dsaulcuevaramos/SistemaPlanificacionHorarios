@@ -17,7 +17,10 @@ const idTurnoSeleccionado = ref(null);
 const bloques = ref([]);           // Todos los bloques del turno (filas repetidas por día)
 const sesionesPendientes = ref([]); // Data cruda de sesiones
 const horarioAsignado = ref([]);    // Data cruda de asignaciones
+
 const loading = ref(false);
+
+
 
 // --- INICIO ---
 onMounted(async () => {
@@ -85,6 +88,17 @@ watch(idTurnoSeleccionado, async (val) => {
     if (val) await cargarDatos();
 });
 
+
+const horariosFiltradosPorVista = computed(() => {
+  if (!cicloSeleccionado.value) return [];
+  
+  return horarioAsignado.value.filter(h => {
+    // Valida que el curso pertenezca al ciclo actual
+    const cicloCurso = h.sesion?.grupo?.curso_aperturado?.curso?.ciclo;
+    return cicloCurso === cicloSeleccionado.value;
+  });
+});
+
 async function cargarDatos() {
   loading.value = true;
   try {
@@ -107,6 +121,7 @@ async function cargarDatos() {
     loading.value = false;
   }
 }
+
 
 // --- COMPUTED: LÓGICA DE LA GRILLA DINÁMICA ---
 
@@ -182,7 +197,7 @@ const gruposDelCiclo = computed(() => {
 
       // 3. Comparación segura usando '?.'
       return item.grupo?.curso_aperturado?.curso?.ciclo === cicloSeleccionado.value && 
-             item.grupo?.id_turno === idTurnoSeleccionado.value;
+            item.grupo?.id_turno === idTurnoSeleccionado.value;
   };
 
   // Filtrar pendientes
@@ -202,7 +217,9 @@ const gruposDelCiclo = computed(() => {
 
 // --- HELPERS ---
 function getAsignadasPorGrupo(grupoNombre) {
-  return horarioAsignado.value.filter(h => h.sesion.grupo.nombre === grupoNombre);
+  return horariosFiltradosPorVista.value.filter(h => 
+    h.sesion?.grupo?.nombre === grupoNombre
+  );
 }
 
 // Obtiene el ID exacto del bloque DB para una combinación Dia + Hora
@@ -298,6 +315,42 @@ async function quitarSesion(idHorario) {
         await cargarDatos();
     } catch (e) { console.error(e); }
 }
+
+
+
+const descargarExcel = async () => {
+    try {
+        Swal.fire({
+            title: 'Generando Reporte...',
+            text: 'Preparando formato institucional...',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading()
+        });
+
+        const response = await horarioService.descargarReporteExcel(idPeriodo);
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `Horario_General_P${idPeriodo}.xlsx`);
+        document.body.appendChild(link);
+        link.click();
+        
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+
+        Swal.close();
+        
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000 });
+        Toast.fire({ icon: 'success', title: 'Descarga exitosa' });
+
+    } catch (e) {
+        console.error(e);
+        const msg = e.response?.data?.detail || 'No se pudo generar el reporte.';
+        Swal.fire('Error', msg, 'error');
+    }
+};
+
 </script>
 
 <template>

@@ -10,7 +10,8 @@ from app.models.usuario import Usuario
 # Importamos la instancia 'periodo' que creamos arriba
 from app.crud.crud_periodo import periodo as crud_periodo
 from app.schemas.periodo import PeriodoCreate, PeriodoResponse, PeriodoUpdate
-
+from app.services.clonacion_service import clonar_carga_academica
+    
 router = APIRouter()
 
 @router.get("/", response_model=List[PeriodoResponse])
@@ -72,3 +73,16 @@ async def read_periodo(
         raise HTTPException(status_code=404, detail="Periodo no encontrado")
     return periodo
     
+
+@router.post("/clonar/{id_origen}/{id_destino}")
+async def endpoint_clonar_periodo(
+    id_origen: int, 
+    id_destino: int, 
+    db: AsyncSession = Depends(get_db)
+):
+    resultado = await clonar_carga_academica(db, id_origen, id_destino)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=400, detail=resultado["message"])
+        
+    return resultado

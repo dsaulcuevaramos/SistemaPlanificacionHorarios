@@ -79,6 +79,17 @@ export default {
         } else {
             Swal.fire('¡Cuidado!', error, 'error');
         }
+    },
+
+
+    async autogenerar(idPeriodo, ciclo) {
+        return api.post(`${ENDPOINT_HORARIOS}/autogenerar-ciclo/${idPeriodo}/${ciclo}`);
+    },
+
+    async descargarReporteExcel(idPeriodo) {
+        return api.get(`${ENDPOINT_HORARIOS}/exportar-excel/${idPeriodo}`, {
+            responseType: 'blob' 
+        });
     }
 
 };
