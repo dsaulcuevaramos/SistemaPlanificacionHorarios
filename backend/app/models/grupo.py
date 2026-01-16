@@ -20,5 +20,9 @@ class Grupo(Base, BaseMixin):
     curso_aperturado = relationship("CursoAperturado", back_populates="grupos")
     docente = relationship("Docente", back_populates="grupos")
     turno = relationship("Turno", back_populates="grupos")
-    sesiones = relationship("Sesion", back_populates="grupo")
-    examenes = relationship("HorarioExamen", back_populates="grupo")
+
+    # --- CORRECCIÓN AQUÍ: AGREGAR cascade="all, delete-orphan" ---
+    sesiones = relationship("Sesion", back_populates="grupo", cascade="all, delete-orphan")
+    
+    # Si borras el grupo, se borran los exámenes también
+    examenes = relationship("HorarioExamen", back_populates="grupo", cascade="all, delete-orphan")

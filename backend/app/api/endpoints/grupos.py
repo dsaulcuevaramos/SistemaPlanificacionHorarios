@@ -10,6 +10,8 @@ from app.models.grupo import Grupo
 from app.models.curso_aperturado import CursoAperturado
 from app.models.curso import Curso
 from app.models.docente import Docente
+from app.models.bloque_horario import BloqueHorario
+from app.models.horario import Horario
 from app.models.turno import Turno
 from app.models.contrato_docente import ContratoDocente
 from app.models.disponibilidad_docente import DisponibilidadDocente
@@ -349,6 +351,32 @@ async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
     return {"message": "Grupo eliminado"}
 
 
+async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
+    """
+    Crea las filas vacías (id_sesion=NULL) en la tabla Horario para un grupo nuevo.
+    """
+    # 1. Traer todos los bloques del turno de ese grupo
+    stmt = select(BloqueHorario).where(
+        BloqueHorario.id_turno == grupo_obj.id_turno,
+        BloqueHorario.estado == 1
+    )
+    bloques = (await db.execute(stmt)).scalars().all()
+    
+    casillas = []
+    for b in bloques:
+        casilla = Horario(
+            id_sesion=None,     # VACÍO POR DEFECTO
+            id_bloque=b.id,
+            id_periodo=id_periodo,
+            id_aula=None,
+            ciclo=ciclo,        # Dato redundante útil
+            grupo=grupo_obj.nombre, # Dato redundante útil
+            estado=1
+        )
+        casillas.append(casilla)
+    
+    if casillas:
+        db.add_all(casillas)
 
 """
 # En routers/grupos.py (Arriba, junto a las otras funciones auxiliares)

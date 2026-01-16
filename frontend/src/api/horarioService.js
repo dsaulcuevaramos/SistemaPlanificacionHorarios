@@ -82,6 +82,13 @@ export default {
     },
 
 
+
+    async autogenerarCiclo(idPeriodo, ciclo) {
+        return api.post(`/horarios/autogenerar-ciclo/${idPeriodo}/${ciclo}`);
+    },
+
+
+    ///
     async autogenerar(idPeriodo, ciclo) {
         return api.post(`${ENDPOINT_HORARIOS}/autogenerar-ciclo/${idPeriodo}/${ciclo}`);
     },

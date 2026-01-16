@@ -160,6 +160,33 @@ async def get_ciclos_en_periodo(id_periodo: int, db: AsyncSession = Depends(get_
     return [{"id": c, "nombre": f"Ciclo {c}"} for c in ciclos]
 
 
+
+@router.get("/sesiones/pendientes/{id_periodo}")
+async def read_sesiones_pendientes(
+    id_periodo: int,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = (
+        select(Sesion)
+        .join(Grupo).join(CursoAperturado).join(Curso)
+        .outerjoin(Horario) # Left join para ver si tiene horario
+        .where(
+            CursoAperturado.id_periodo == id_periodo,
+            Horario.id == None, # Solo las que NO tienen horario
+            Sesion.estado == 1
+        )
+        .options(
+            # CARGA PROFUNDA OBLIGATORIA
+            joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso),
+            joinedload(Sesion.grupo).joinedload(Grupo.docente),
+            joinedload(Sesion.grupo).joinedload(Grupo.turno) 
+        )
+    )
+    result = await db.execute(stmt)
+    # .unique() es vital cuando haces joins profundos que podrían duplicar filas en la query raw
+    return result.unique().scalars().all()
+
+
 # ==========================================
 # 3. GUARDAR ASIGNACIÓN MANUAL (Validaciones)
 # ==========================================
@@ -294,11 +321,7 @@ async def eliminar_horario(id_horario: int, db: AsyncSession = Depends(get_db)):
     return {"message": "Sesión liberada completamente del horario"}
 
 
-@router.get("/exportar-excel/grupo/{id_grupo}")
-async def exportar_horario_excel(id_grupo: int, db: AsyncSession = Depends(get_db)):
-    # ... (Mantén aquí el código de Excel que tenías en gestion_horarios.py)
-    #
-    pass 
+
 
 # Nota: He resumido las funciones de exportación para no hacer el código gigante, 
 # pero debes copiar el cuerpo de 'exportar_horario_excel' y 'exportar_plantilla_horarios' 
@@ -429,6 +452,7 @@ async def autogenerar_por_ciclo(
     return {"status": "success", "generados": len(lista_para_upsert), "fallos": len(fallos)}
 
 
+
 def safe_to_roman(n):
     if not isinstance(n, int) or n < 1: return "0"
     mapa = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
@@ -522,8 +546,8 @@ async def exportar_horario_excel(
             # Títulos
             titulos = [
                 "UNIVERSIDAD NACIONAL DE UCAYALI",
-                "FACULTAD DE INGENIERÍA DE SISTEMAS E INGENIERÍA CIVIL",
-                "ESCUELA ACADÉMICO PROFESIONAL DE INGENIERÍA DE SISTEMAS",
+                "FACULTAD DE CIENCIAS ECONOMICAS ADMINISTRATIVAS Y CONTABLES",
+                "ESCUELA PROFESIONAL DE CIENCIAS ADMINISTRATIVAS",
                 f"SEMESTRE ACADÉMICO {nombre_semestre} - HORARIO GENERAL"
             ]
             total_cols = ws.max_column

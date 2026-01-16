@@ -215,12 +215,69 @@ const gruposDelCiclo = computed(() => {
   return Array.from(unicos).sort(); 
 });
 
+
+
+
+
 // --- HELPERS ---
+const mapaOcupacion = computed(() => {
+    const mapa = {}; // Clave: "idSesion-dia-orden" -> Boolean
+    horarioAsignado.value.forEach(h => {
+        // Aseguramos leer la estructura anidada correctamente
+        if (h.sesion && h.bloque_horario) {
+            const key = `${h.sesion.id}-${h.bloque_horario.dia_semana}-${h.bloque_horario.orden}`;
+            mapa[key] = true;
+        }
+    });
+    return mapa;
+});
+
+// 2. Función corregida: Solo devuelve la "Cabeza" de la sesión
 function getAsignadasPorGrupo(grupoNombre) {
-  return horariosFiltradosPorVista.value.filter(h => 
-    h.sesion?.grupo?.nombre === grupoNombre
-  );
+    return horarioAsignado.value.filter(h => {
+        // --- 1. SEGURIDAD DE DATOS ---
+        if (!h.sesion?.grupo?.curso_aperturado?.curso) return false;
+        if (!h.bloque_horario) return false;
+
+        // --- 2. FILTROS LÓGICOS (LO QUE FALLABA) ---
+        
+        // A. ¿Es del grupo correcto? (Ej: "A")
+        const matchGrupo = h.sesion.grupo.nombre === grupoNombre;
+        
+        // B. ¿Es del CICLO seleccionado? (¡CRÍTICO!)
+        const matchCiclo = h.sesion.grupo.curso_aperturado.curso.ciclo === cicloSeleccionado.value;
+        
+        // C. ¿Es del TURNO seleccionado?
+        const matchTurno = h.sesion.grupo.id_turno === idTurnoSeleccionado.value;
+
+        // Si falla cualquiera de estos, NO pertenece a esta pantalla.
+        if (!matchGrupo || !matchCiclo || !matchTurno) return false;
+
+        // --- 3. FILTRO VISUAL (SPAN) ---
+        
+        // Datos actuales
+        const ordenActual = h.bloque_horario.orden;
+        const dia = h.bloque_horario.dia_semana;
+        const idSesion = h.sesion.id;
+
+        // Buscamos si existe el bloque "anterior" (orden - 1)
+        const keyAnterior = `${idSesion}-${dia}-${ordenActual - 1}`;
+        
+        // Si existe el anterior, significa que yo soy la "cola" de una clase larga.
+        // NO me dibujes, porque mi hermano mayor (la cabeza) ya ocupó el espacio con 'span'.
+        if (mapaOcupacion.value[keyAnterior]) {
+            return false; 
+        }
+
+        // Si pasé todos los filtros: Soy del ciclo correcto, del grupo correcto y soy la cabeza.
+        return true;
+    });
 }
+
+
+
+
+
 
 // Obtiene el ID exacto del bloque DB para una combinación Dia + Hora
 function getBloqueId(dia, horaInicio) {
@@ -242,12 +299,15 @@ function getFilaIndex(horaInicio) {
 }
 
 // --- DRAG & DROP ---
-function onDragStart(evt, origen, data, asignacionId = null) {
+function onDragStart(evt, origen, sesionData, asignacionId = null, nombreGrupoExplicit = null) {
   const payload = {
     origen,
-    id_sesion: data.id || data.sesion.id,
-    duracion: data.duracion_horas || data.sesion.duracion_horas,
-    grupo_nombre: data.grupo?.nombre || data.sesion?.grupo?.nombre,
+    id_sesion: sesionData.id,
+    duracion: sesionData.duracion_horas,
+    
+    // AQUÍ EL CAMBIO: Si me dan el nombre explícito, lo uso. Si no, trato de leerlo del objeto.
+    grupo_nombre: nombreGrupoExplicit || sesionData.grupo?.nombre,
+    
     asignacionId
   };
   evt.dataTransfer.setData('payload', JSON.stringify(payload));
@@ -259,53 +319,58 @@ async function onDrop(evt, diaNombre, bloqueId, grupoDestinoNombre) {
   if (!payloadStr) return;
   const item = JSON.parse(payloadStr);
 
-  // Validación de Grupo
+  // Validación 1: No mezclar grupos
   if (item.grupo_nombre !== grupoDestinoNombre) {
-    Swal.fire('Acción Bloqueada', `No puedes mezclar grupos (${item.grupo_nombre} -> ${grupoDestinoNombre})`, 'warning');
+    Swal.fire('Acción Bloqueada', `No puedes mover del Grupo ${item.grupo_nombre} al ${grupoDestinoNombre}`, 'warning');
     return;
   }
+
+  // Validación 2: Evitar soltar en el mismo lugar (si es movimiento)
+  // (Opcional, pero ahorra una llamada a la API)
   
-  // Validación Visual de Espacio (Opcional, el backend valida cruces reales)
-  // ... (Tu lógica de Tetris aquí si deseas)
-
-  try { 
-
-
-
-
-    console.log("Enviando Payload:", {
-      id_sesion: item.id_sesion,
-      id_bloque: bloqueId, // <--- Verifica en la consola que esto NO sea null
-      id_periodo: idPeriodo,
-      id_aula: null
-    });
-
-    if (!bloqueId) {
-        throw new Error("El ID del bloque es NULL. Revisa la coincidencia de horas.");
+  try {
+    // === PASO CLAVE PARA MOVER ===
+    // Si la ficha viene de la grilla ('EXISTING'), primero la eliminamos de su lugar anterior.
+    // Usamos 'await' para asegurar que se borre ANTES de intentar asignar la nueva.
+    if (item.origen === 'EXISTING' && item.asignacionId) {
+        await horarioService.eliminar(item.asignacionId);
     }
 
-
-
-
-    // Si viene de mover, borramos la anterior
-    if (item.origen === 'EXISTING') await horarioService.eliminar(item.asignacionId);
-
-    // Guardar
+    // === PASO DE ASIGNACIÓN ===
+    // Ahora que el espacio (o el docente) se liberó, creamos la nueva asignación
     await horarioService.asignar({
       id_sesion: item.id_sesion,
-      id_bloque: bloqueId, // ID real del bloque (ej: "Lunes 7:00")
+      id_bloque: bloqueId,
       id_periodo: idPeriodo,
       id_aula: null
     });
 
-    await cargarDatos(); // Recargar para ver cambios
+    // Recargar todo para ver el cambio
+    await cargarDatos(); 
     
-    // Feedback rápido (Toast)
+    // Feedback suave (Toast)
     const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-    Toast.fire({ icon: 'success', title: 'Asignado' });
+    Toast.fire({ icon: 'success', title: item.origen === 'EXISTING' ? 'Reubicado' : 'Asignado' });
 
   } catch (error) {
-    Swal.fire('Error', error.response?.data?.detail || 'Error al asignar', 'error');
+    console.error(error);
+    
+    // CASO DE ERROR AL MOVER:
+    // Si falló la nueva asignación (ej: cruce) pero ya borramos la anterior,
+    // el curso se iría a "Pendientes". 
+    // Podrías intentar restaurarlo, pero recargando datos aparecerá en la barra lateral.
+    
+    let msg = error.response?.data?.detail || 'No se pudo asignar el horario';
+    
+    // Si es un error de cruce conocido (Error 400 del backend)
+    if (msg.includes('Cruce') || msg.includes('ocupado')) {
+         Swal.fire('Ocupado', msg, 'warning');
+    } else {
+         Swal.fire('Error', msg, 'error');
+    }
+    
+    // Siempre recargar por si acaso quedó un estado inconsistente visual
+    await cargarDatos(); 
   }
 }
 
@@ -315,6 +380,37 @@ async function quitarSesion(idHorario) {
         await cargarDatos();
     } catch (e) { console.error(e); }
 }
+
+
+
+const autogenerar = async () => {
+  if (!cicloSeleccionado.value) return Swal.fire('Error', 'Selecciona un ciclo primero', 'warning');
+
+  const confirm = await Swal.fire({
+    title: `¿Autogenerar Ciclo ${cicloSeleccionado.value}?`,
+    text: "Se programarán las sesiones pendientes respetando los horarios ya existentes.",
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, generar'
+  });
+
+  if (confirm.isConfirmed) {
+    try {
+       loading.value = true;
+       const res = await horarioService.autogenerarCiclo(idPeriodo, cicloSeleccionado.value);
+
+       await cargarDatos(); // Recargar la malla
+
+       Swal.fire('Proceso Terminado', `Generados: ${res.data.generados}. No asignados: ${res.data.fallos}`, 'success');
+    } catch (e) {
+       Swal.fire('Error', 'Falló la generación automática', 'error');
+    } finally {
+       loading.value = false;
+    }
+  }
+};
+
+
 
 
 
@@ -363,6 +459,24 @@ const descargarExcel = async () => {
        </div>
        
        <div class="filters-row">
+
+
+          
+            <button @click="descargarExcel" class="btn-excel" title="Descargar Reporte General">
+                <i class="fas fa-file-excel"></i> Exportar
+            </button>
+   
+
+            <button 
+                v-if="pendientesFiltrados.length > 0"
+                @click="autogenerar" 
+                class="btn-generate-mini"
+                title="Autocompletar pendientes de este ciclo"
+            >
+                ⚡ Autogenerar
+            </button>
+
+
            <div class="control-group">
               <label>Ciclo:</label>
               <select v-model="cicloSeleccionado" class="form-select">
@@ -396,7 +510,7 @@ const descargarExcel = async () => {
              class="ficha-sidebar"
              :class="sesion.grupo.nombre === 'A' ? 'border-indigo' : 'border-pink'"
              draggable="true"
-             @dragstart="onDragStart($event, 'NEW', sesion)"
+             @dragstart="onDragStart($event, 'NEW', sesion, null, sesion.grupo.nombre)"
           >
               <div class="ficha-header">
                   <span class="badge">{{ sesion.grupo.nombre }}</span>
@@ -442,7 +556,7 @@ const descargarExcel = async () => {
                         class="session-item"
                         :class="asig.sesion.tipo_sesion === 'TEORIA' ? 'teoria' : 'practica'"
                         draggable="true"
-                        @dragstart="onDragStart($event, 'EXISTING', asig, asig.id)"
+                        @dragstart="onDragStart($event, 'EXISTING', asig.sesion, asig.id, grupoNombre)"
                         :style="{
                            gridColumn: diasDinamicos.indexOf(asig.bloque_horario.dia_semana) + 2,
                            gridRow: `${getFilaIndex(asig.bloque_horario.hora_inicio) + 2} / span ${asig.sesion.duracion_horas}`
@@ -496,13 +610,44 @@ const descargarExcel = async () => {
 .border-pink { border-left-color: #ec4899; }
 
 /* CONTENIDO PRINCIPAL */
-.content { flex: 1; padding: 2rem; overflow: auto; background-color: #f8fafc; position: relative; }
+.content { 
+    flex: 1; 
+    padding: 2rem; 
+    overflow: hidden; /* Ocultamos el scroll global */
+    background-color: #f8fafc; 
+    position: relative; 
+    display: flex;
+    flex-direction: column;
+}
+
 .loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; z-index: 50; font-weight: bold; color: #6366f1; }
-.mallas-wrapper { display: flex; gap: 2rem; align-items: flex-start; min-width: min-content; padding-bottom: 40px; }
+.mallas-wrapper { 
+    display: flex; 
+    gap: 2rem; 
+    align-items: flex-start; 
+    
+    /* --- CORRECCIÓN DE SCROLL --- */
+    overflow-x: auto;       /* Scroll horizontal activado */
+    overflow-y: hidden;     /* Sin scroll vertical en este eje */
+    padding-bottom: 20px;   /* Espacio para la barra */
+    width: 100%;            
+    height: 100%;           /* Ocupar toda la altura */
+}
+
 .empty-main { margin: auto; color: #94a3b8; font-size: 1.2rem; margin-top: 40px; }
 
 /* MALLA CARD */
-.malla-card { background: white; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); overflow: hidden; width: 550px; flex-shrink: 0; border: 1px solid #e2e8f0; }
+.malla-card { 
+    background: white; 
+    border-radius: 12px; 
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); 
+    overflow: visible;      /* Permitir ver sombras */
+    border: 1px solid #e2e8f0;
+    
+    /* --- CORRECCIÓN DE TAMAÑO --- */
+    flex: 0 0 550px;        /* ¡NO ENCOGER! Ancho fijo de 550px */
+    width: 550px;           
+}
 .malla-header { background: #1e293b; color: white; padding: 12px; text-align: center; font-weight: bold; letter-spacing: 0.5px; }
 
 /* GRILLA */
@@ -513,16 +658,94 @@ const descargarExcel = async () => {
 .grid-bg-cell:hover { background: #f0f9ff; }
 
 /* SESIONES ASIGNADAS */
-.session-item { z-index: 10; margin: 3px; padding: 6px; border-radius: 6px; font-size: 0.75rem; display: flex; flex-direction: column; justify-content: center; text-align: center; position: relative; cursor: grab; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow: hidden; animation: popIn 0.2s ease-out; border: 1px solid rgba(0,0,0,0.05); }
+.session-item { 
+    z-index: 10; 
+    margin: 1px; /* Pequeño margen para ver si hay algo detrás */
+    padding: 6px; 
+    border-radius: 6px; 
+    font-size: 0.75rem; 
+    display: flex; 
+    flex-direction: column; 
+    justify-content: center; 
+    text-align: center; 
+    position: relative; 
+    cursor: grab; 
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* Sombra más fuerte para notar superposición */
+    overflow: visible;
+    border: 1px solid rgba(0,0,0,0.1); 
+    
+    /* ASEGURAR FONDO OPACO */
+    opacity: 1 !important; 
+}
 .session-item:active { cursor: grabbing; }
 .sess-title { font-weight: 700; line-height: 1.2; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-box-orient: vertical; }
 
 .teoria { background: #e0e7ff; border-left: 4px solid #4338ca; color: #312e81; }
 .practica { background: #d1fae5; border-left: 4px solid #059669; color: #064e3b; }
 
-.btn-remove { position: absolute; top: 2px; right: 2px; background: rgba(255,255,255,0.6); color: #ef4444; border: none; border-radius: 50%; width: 18px; height: 18px; display: none; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; line-height: 1; }
+.btn-remove { 
+    position: absolute; 
+    top: -8px;       /* Lo sacamos un poco hacia arriba para que no tape texto */
+    right: -8px;     /* Lo sacamos a la derecha */
+    
+    background: #ef4444; /* Rojo sólido */
+    color: white;        /* X blanca */
+    
+    border: 2px solid white; /* Borde blanco para separar del curso */
+    border-radius: 50%; 
+    
+    width: 26px;     /* Mucho más grande (antes 18px) */
+    height: 26px; 
+    
+    display: none;   /* Se oculta por defecto */
+    align-items: center; 
+    justify-content: center; 
+    cursor: pointer; 
+    font-size: 16px; 
+    font-weight: bold;
+    z-index: 50;     /* Asegura que esté encima de todo */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: transform 0.1s;
+}
+.btn-remove:hover { 
+    background: #dc2626; 
+    transform: scale(1.1);
+}
+
 .session-item:hover .btn-remove { display: flex; }
 .btn-remove:hover { background: #fee2e2; color: #b91c1c; }
+
+
+.btn-generate-mini {
+  background: #8b5cf6; color: white; border: none; padding: 0 16px; 
+  border-radius: 6px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  transition: transform 0.1s;
+}
+.btn-generate-mini:active { transform: scale(0.95); }
+
+.btn-excel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #107c41; /* Verde Excel */
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    height: 38px; /* Para igualar altura de selects */
+}
+
+.btn-excel:hover {
+    background-color: #0c5e31;
+}
+
+.btn-excel i {
+    font-size: 1.1rem;
+}
 
 @keyframes popIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 </style>
