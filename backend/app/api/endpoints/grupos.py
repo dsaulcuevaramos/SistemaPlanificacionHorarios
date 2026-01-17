@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, distinct, func, update, and_, delete, cast, Integer
 from sqlalchemy.orm import joinedload, aliased
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.database import get_db
 # Modelos
@@ -388,7 +389,8 @@ async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
     """
-    Crea las filas vacías (id_sesion=NULL) en la tabla Horario para un grupo nuevo.
+    Crea las filas vacías de forma ROBUSTA. 
+    Si ya existen filas basura, NO falla, simplemente las reutiliza.
     """
     # 1. Traer todos los bloques del turno de ese grupo
     stmt = select(BloqueHorario).where(
@@ -397,21 +399,30 @@ async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo
     )
     bloques = (await db.execute(stmt)).scalars().all()
     
-    casillas = []
+    if not bloques: return
+
+    # 2. Preparar datos para inserción masiva
+    valores_insert = []
     for b in bloques:
-        casilla = Horario(
-            id_sesion=None,     # VACÍO POR DEFECTO
-            id_bloque=b.id,
-            id_periodo=id_periodo,
-            id_aula=None,
-            ciclo=ciclo,        # Dato redundante útil
-            grupo=grupo_obj.nombre, # Dato redundante útil
-            estado=1
-        )
-        casillas.append(casilla)
+        valores_insert.append({
+            "id_sesion": None,
+            "id_bloque": b.id,
+            "id_periodo": id_periodo,
+            "id_aula": None,
+            "ciclo": ciclo,
+            "grupo": grupo_obj.nombre,
+            "estado": 1
+        })
     
-    if casillas:
-        db.add_all(casillas)
+    # 3. INSERT INTELIGENTE (UPSERT / DO NOTHING)
+    # Esto es lo que te faltaba: "on_conflict_do_nothing"
+    if valores_insert:
+        stmt = pg_insert(Horario).values(valores_insert)
+        stmt = stmt.on_conflict_do_nothing(
+            constraint='uq_horario_casilla' # Si choca con el Unique, no hace nada (no error)
+        )
+        await db.execute(stmt)
+        # Nota: No necesitamos commit aquí porque la función padre lo hará
 
 """
 # En routers/grupos.py (Arriba, junto a las otras funciones auxiliares)
