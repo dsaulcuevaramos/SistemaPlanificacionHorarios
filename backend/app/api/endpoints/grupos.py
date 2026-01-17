@@ -341,7 +341,7 @@ async def actualizar_grupo(id_grupo: int, payload: GrupoUpdate, db: AsyncSession
 
 @router.delete("/{id_grupo}")
 async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
-    # 1. Obtener datos del grupo para saber qué borrar en Horario
+    # 1. Obtener datos del grupo para localizar su rastro en el horario
     stmt = (
         select(Grupo)
         .options(joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso))
@@ -351,15 +351,14 @@ async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
     
     if not grupo: raise HTTPException(404, "Grupo no encontrado")
     
-    # Datos clave para borrar el rastro en Horario
+    # Datos para el borrado preciso
     nombre_grupo = grupo.nombre
     ciclo_grupo = grupo.curso_aperturado.curso.ciclo
     id_periodo = grupo.curso_aperturado.id_periodo
     id_docente_afectado = grupo.id_docente
     
-    # 2. BORRADO FÍSICO TOTAL DE HORARIOS (Esqueletos y Asignaciones)
-    # Borramos todo lo que coincida con este Grupo, Ciclo y Periodo.
-    # Esto elimina el conflicto "uq_horario_casilla" para el futuro insert.
+    # 2. BORRADO FÍSICO DEL ESQUELETO EN HORARIO (Sin piedad)
+    # Borramos cualquier fila en 'horario' que tenga este ciclo y nombre de grupo.
     stmt_del_horario = (
         delete(Horario)
         .where(
@@ -370,29 +369,25 @@ async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
     )
     await db.execute(stmt_del_horario)
 
-    # 3. Borrar Sesiones
+    # 3. BORRADO FÍSICO DE SESIONES
     stmt_del_sesiones = delete(Sesion).where(Sesion.id_grupo == id_grupo)
     await db.execute(stmt_del_sesiones)
 
-    # 4. Borrar el Grupo
+    # 4. BORRADO FÍSICO DEL GRUPO
     await db.delete(grupo)
     
-    # 5. Actualizar docente (si aplica)
+    # 5. Actualizar horas del docente
     if id_docente_afectado:
-        await db.commit()
+        await db.commit() # Commit intermedio necesario
         await actualizar_disponibilidad_docente(db, id_docente_afectado, id_periodo)
     
     await db.commit()
         
-    return {"message": "Grupo eliminado FÍSICAMENTE (Malla liberada)"}
+    return {"message": "Grupo, Sesiones y Horario eliminados FÍSICAMENTE."}
 
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
-    """
-    Crea las filas vacías de forma ROBUSTA. 
-    Si ya existen filas basura, NO falla, simplemente las reutiliza.
-    """
-    # 1. Traer todos los bloques del turno de ese grupo
+    # 1. Traer bloques del turno
     stmt = select(BloqueHorario).where(
         BloqueHorario.id_turno == grupo_obj.id_turno,
         BloqueHorario.estado == 1
@@ -401,27 +396,23 @@ async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo
     
     if not bloques: return
 
-    # 2. Preparar datos para inserción masiva
-    valores_insert = []
+    # 2. Crear objetos Horario nuevos (INSERT directo)
+    nuevas_casillas = []
     for b in bloques:
-        valores_insert.append({
-            "id_sesion": None,
-            "id_bloque": b.id,
-            "id_periodo": id_periodo,
-            "id_aula": None,
-            "ciclo": ciclo,
-            "grupo": grupo_obj.nombre,
-            "estado": 1
-        })
-    
-    # 3. INSERT INTELIGENTE (UPSERT / DO NOTHING)
-    # Esto es lo que te faltaba: "on_conflict_do_nothing"
-    if valores_insert:
-        stmt = pg_insert(Horario).values(valores_insert)
-        stmt = stmt.on_conflict_do_nothing(
-            constraint='uq_horario_casilla' # Si choca con el Unique, no hace nada (no error)
+        casilla = Horario(
+            id_sesion=None,
+            id_bloque=b.id,
+            id_periodo=id_periodo,
+            id_aula=None,
+            ciclo=ciclo,
+            grupo=grupo_obj.nombre,
+            estado=1
         )
-        await db.execute(stmt)
+        nuevas_casillas.append(casilla)
+    
+    # 3. Guardar
+    if nuevas_casillas:
+        db.add_all(nuevas_casillas)
         # Nota: No necesitamos commit aquí porque la función padre lo hará
 
 """
