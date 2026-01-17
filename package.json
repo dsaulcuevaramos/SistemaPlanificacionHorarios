@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "pinia": "^3.0.4",
-    "pydantic": "^0.0.1-security"
+    "pydantic": "^0.0.1-security",
+    "sqlalchemy": "^10.1.1"
   }
 }
