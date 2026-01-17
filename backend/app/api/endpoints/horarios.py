@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func, delete
+from sqlalchemy import select, and_, or_, func, delete, update
 from sqlalchemy.orm import joinedload
 
 from importlib import import_module
@@ -305,28 +305,37 @@ async def guardar_asignacion_manual(
         raise HTTPException(500, str(e))
 
 
-#esto era la funcion antigua para eliminar asignacion de un bloque, pero lo cambiaste
+
 @router.delete("/{id_horario}")
 async def eliminar_asignacion(id_horario: int, db: AsyncSession = Depends(get_db)):
-    # 1. Buscamos el horario
+    # 1. Buscamos el horario seleccionado
     horario = await db.get(Horario, id_horario)
-    if not horario:
-        raise HTTPException(404, "Horario no encontrado")
+    if not horario: raise HTTPException(404, "Horario no encontrado")
 
-    # 2. ESTRATEGIA: "Limpiar" en lugar de "Borrar"
-    # Si borramos la fila, perdemos el espacio en la grilla (el esqueleto).
-    # Lo que queremos es quitar la sesión (id_sesion = None) y liberar el espacio.
+    # Si es un espacio vacío, no hay nada que borrar
+    if not horario.id_sesion:
+        return {"message": "El espacio ya estaba vacío"}
+
+    id_sesion_a_borrar = horario.id_sesion
+
+    # 2. LIMPIEZA MASIVA: Buscamos TODAS las apariciones de esta sesión en la malla
+    stmt = (
+        update(Horario)
+        .where(
+            Horario.id_sesion == id_sesion_a_borrar,
+            Horario.id_periodo == horario.id_periodo
+        )
+        .values(
+            id_sesion=None,
+            id_aula=None,
+            estado=1
+        )
+    )
     
-    horario.id_sesion = None
-    horario.id_aula = None
-    horario.estado = 1 # Disponible / Vacío
-    
-    # IMPORTANTE: No tocamos 'ciclo', 'grupo' ni 'id_bloque' para que la celda
-    # siga existiendo en la base de datos y el Frontend pueda dibujarla vacía.
-    
+    await db.execute(stmt)
     await db.commit()
-    return {"message": "Asignación retirada correctamente (Espacio liberado)"}
-
+    
+    return {"message": "Curso retirado del horario (todas sus horas)"}
 
 
 
