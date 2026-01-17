@@ -124,21 +124,24 @@ async def get_sesiones_pendientes(id_periodo: int, db: AsyncSession = Depends(ge
     stmt = (
         select(Sesion)
         .join(Grupo).join(CursoAperturado).join(Curso)
-        .outerjoin(Horario) # Left join
+        .outerjoin(Horario) 
         .where(
             CursoAperturado.id_periodo == id_periodo,
-            Sesion.estado == 1,
-            Horario.id == None # Solo las que no tienen horario
+            Horario.id == None, # Solo las que NO tienen horario
+            Sesion.estado == 1
         )
         .options(
-            # ¡CRUCIAL! Cargar toda la jerarquía para el filtro del frontend
-            joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso),
+            # --- CORRECCIÓN CRÍTICA AQUÍ ---
+            # Usamos import_module para evitar el error circular, igual que hiciste en el otro endpoint
+            joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(import_module('app.models.curso_aperturado').CursoAperturado.curso),
+            
             joinedload(Sesion.grupo).joinedload(Grupo.docente),
-            joinedload(Sesion.grupo).joinedload(Grupo.turno)
+            joinedload(Sesion.grupo).joinedload(Grupo.turno) 
         )
     )
     result = await db.execute(stmt)
     return result.unique().scalars().all()
+
 
 @router.get("/bloques/turno/{id_turno}", response_model=List[BloqueHorarioResponse])
 async def read_bloques(id_turno: int, db: AsyncSession = Depends(get_db)):
@@ -152,7 +155,8 @@ async def get_horario_periodo(id_periodo: int, db: AsyncSession = Depends(get_db
         select(Horario)
         .where(Horario.id_periodo == id_periodo, Horario.estado == 1)
         .options(
-            joinedload(Horario.sesion).joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(import_module('app.models.curso_aperturado').CursoAperturado.curso),
+            joinedload(Horario.sesion).joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(
+                import_module('app.models.curso_aperturado').CursoAperturado.curso),
             joinedload(Horario.sesion).joinedload(Sesion.grupo).joinedload(Grupo.docente),
             joinedload(Horario.bloque_horario),
             joinedload(Horario.aula)
@@ -301,7 +305,7 @@ async def guardar_asignacion_manual(
         raise HTTPException(500, str(e))
 
 
-
+#esto era la funcion antigua para eliminar asignacion de un bloque, pero lo cambiaste
 @router.delete("/{id_horario}")
 async def eliminar_asignacion(id_horario: int, db: AsyncSession = Depends(get_db)):
     # 1. Buscamos el horario

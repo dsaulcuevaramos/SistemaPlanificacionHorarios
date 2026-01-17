@@ -12,7 +12,7 @@ from app.models.curso import Curso
 from app.models.docente import Docente
 from app.models.bloque_horario import BloqueHorario
 from app.models.horario import Horario
-from app.models.turno import Turno
+from app.models.sesion import Sesion
 from app.models.contrato_docente import ContratoDocente
 from app.models.disponibilidad_docente import DisponibilidadDocente
 
@@ -338,26 +338,39 @@ async def actualizar_grupo(id_grupo: int, payload: GrupoUpdate, db: AsyncSession
 
 @router.delete("/{id_grupo}")
 async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
-    stmt = (
-        select(Grupo)
-        .options(joinedload(Grupo.curso_aperturado))
-        .where(Grupo.id == id_grupo)
-    )
+    # 1. Obtener el grupo
+    stmt = select(Grupo).options(joinedload(Grupo.curso_aperturado)).where(Grupo.id == id_grupo)
     grupo = (await db.execute(stmt)).scalars().first()
     
     if not grupo: raise HTTPException(404, "Grupo no encontrado")
     
     id_docente_afectado = grupo.id_docente
     id_periodo = grupo.curso_aperturado.id_periodo
-    
+
+    # 2. OBTENER IDs DE LAS SESIONES DEL GRUPO
+    stmt_ids = select(Sesion.id).where(Sesion.id_grupo == id_grupo)
+    ids_sesiones = (await db.execute(stmt_ids)).scalars().all()
+
+    # 3. LIMPIEZA PROFUNDA (ESTO ES LO QUE FALTABA)
+    if ids_sesiones:
+        # A. Borrar referencias en HORARIO (El candado que te daba error 500)
+        stmt_del_horario = delete(Horario).where(Horario.id_sesion.in_(ids_sesiones))
+        await db.execute(stmt_del_horario)
+
+        # B. Ahora sí, borrar las SESIONES
+        stmt_del_sesiones = delete(Sesion).where(Sesion.id == Sesion.id).where(Sesion.id_grupo == id_grupo)
+        await db.execute(stmt_del_sesiones)
+
+    # 4. Finalmente, borrar el GRUPO
     await db.delete(grupo)
-    await db.commit() # Borrar grupo
     
+    # 5. Actualizar disponibilidad del docente si es necesario
     if id_docente_afectado:
+        await db.commit() # Commit parcial
         await actualizar_disponibilidad_docente(db, id_docente_afectado, id_periodo)
-        await db.commit()
-        
-    return {"message": "Grupo eliminado"}
+    
+    await db.commit()
+    return {"message": "Grupo eliminado y horario limpiado correctamente"}
 
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
