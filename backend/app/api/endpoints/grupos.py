@@ -156,8 +156,15 @@ async def get_grupos_by_ciclo(ciclo: int, id_periodo: int = None, db: AsyncSessi
         joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso)
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
-
+    grupos = result.scalars().all()
+    for g in grupos:
+        # Esto permite que el front haga: if (grupo.ciclo === cicloSeleccionado)
+        setattr(g, "ciclo", g.curso_aperturado.curso.ciclo)
+        setattr(g, "curso_nombre", g.curso_aperturado.curso.nombre)
+        if g.docente:
+            setattr(g, "docente_nombre", f"{g.docente.apellido}")
+    
+    return grupos
 
 @router.get("/periodo/{id_periodo}/detallado")
 async def get_cursos_con_grupos(id_periodo: int, db: AsyncSession = Depends(get_db)):
@@ -195,6 +202,7 @@ async def crear_grupos_masivo(payload: GrupoCreateMasivo, db: AsyncSession = Dep
 
         # Guardamos datos clave en variables simples (Int/Str) para no depender del objeto DB
         target_periodo_id = curso_ap.id_periodo
+        target_ciclo = curso_ap.curso.ciclo
         h_teoria = int(curso_ap.curso.horas_teoricas or 0)
         h_practica = int(curso_ap.curso.horas_practicas or 0)
         horas_totales_curso = h_teoria + h_practica
@@ -248,6 +256,7 @@ async def crear_grupos_masivo(payload: GrupoCreateMasivo, db: AsyncSession = Dep
                 db.add(sesion_p)
 
             nuevos_grupos.append(nuevo_grupo)
+            await crear_esqueleto_horario(db, nuevo_grupo, target_periodo_id, target_ciclo)
         
         # 4. GUARDAR TODO (FLUSH)
         db.add_all(nuevos_grupos)

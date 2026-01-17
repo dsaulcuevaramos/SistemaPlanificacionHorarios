@@ -23,6 +23,10 @@ class GrupoResponse(BaseModel):
     vacantes: int
     docente_nombre: Optional[str] = "Sin Asignar"
     turno_nombre: str
+
+    id_curso_aperturado: int
+    ciclo: Optional[int] = None 
+    curso_nombre: Optional[str] = None
     class Config:
         from_attributes = True
 
