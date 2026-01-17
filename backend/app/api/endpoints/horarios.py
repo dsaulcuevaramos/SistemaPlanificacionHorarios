@@ -293,38 +293,54 @@ async def guardar_asignacion_manual(
 
 
 @router.delete("/{id_horario}")
-async def eliminar_horario(id_horario: int, db: AsyncSession = Depends(get_db)):
-    """
-    Elimina la asignación de horario.
-    MEJORA: Busca la sesión asociada y elimina TODOS los bloques de esa sesión
-    en el mismo periodo (para que no queden horas sueltas).
-    """
-    # 1. Buscar el horario específico que se quiere borrar
-    horario_a_borrar = await db.get(Horario, id_horario)
+async def eliminar_asignacion_hibrida(id_horario: int, db: AsyncSession = Depends(get_db)):
+    # 1. Buscar el horario clicado para identificar la sesión
+    horario_click = await db.get(Horario, id_horario)
     
-    if not horario_a_borrar:
-        # Si no existe, devolvemos 404 pero no pasa nada grave
-        raise HTTPException(status_code=404, detail="Asignación no encontrada (tal vez ya se borró)")
+    if not horario_click:
+        # Si ya no existe, retornamos 200 para que el frontend no se queje
+        return {"message": "Ya estaba eliminado"}
 
-    # 2. Identificar la sesión y el periodo
-    id_sesion = horario_a_borrar.id_sesion
-    id_periodo = horario_a_borrar.id_periodo
+    id_sesion_a_borrar = horario_click.id_sesion
+    id_periodo = horario_click.id_periodo
 
-    # 3. Borrar TODOS los registros de esa sesión en este periodo
-    # Así limpiamos las 2 o 3 horas completas de la clase
-    stmt_delete = (
-        delete(Horario)
-        .where(
-            Horario.id_sesion == id_sesion,
-            Horario.id_periodo == id_periodo
-        )
+    # Si por alguna razón la celda no tiene sesión (ya está vacía), salimos
+    if not id_sesion_a_borrar:
+        return {"message": "El espacio ya está vacío"}
+
+    # 2. Buscar TODOS los bloques ocupados por esta sesión en este periodo
+    # (Esto soluciona el problema de que queden "horas sueltas")
+    stmt_todos = select(Horario).where(
+        Horario.id_sesion == id_sesion_a_borrar,
+        Horario.id_periodo == id_periodo
     )
-    
-    await db.execute(stmt_delete)
-    await db.commit()
-    
-    return {"message": "Sesión liberada completamente del horario"}
+    bloques_afectados = (await db.execute(stmt_todos)).scalars().all()
 
+    # 3. LÓGICA HÍBRIDA: Recorrer cada bloque y decidir su destino
+    for h in bloques_afectados:
+        # ¿Es un bloque estructural (Esqueleto)? 
+        # Criterio: Tiene Ciclo > 0 y un Grupo válido (A, B, C...)
+        es_esqueleto = (h.ciclo is not None and h.ciclo > 0) and (h.grupo is not None and len(h.grupo) > 0 and h.grupo != '-')
+
+        if es_esqueleto:
+            # ESTRATEGIA: LIMPIAR (Update)
+            # Mantenemos la fila para que el frontend dibuje el cajón vacío
+            h.id_sesion = None
+            h.id_aula = None
+            h.estado = 1 
+            # No tocamos ciclo, grupo ni id_bloque
+        else:
+            # ESTRATEGIA: DESTRUIR (Delete)
+            # Era una fila insertada manualmente o corrupta, la borramos para que no estorbe
+            await db.delete(h)
+
+    # 4. Confirmar cambios
+    try:
+        await db.commit()
+        return {"message": "Sesión eliminada y malla limpiada correctamente"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al limpiar horario: {str(e)}")
 
 
 # Nota: He resumido las funciones de exportación para no hacer el código gigante, 
