@@ -327,28 +327,54 @@ async def actualizar_grupo(id_grupo: int, payload: GrupoUpdate, db: AsyncSession
     return {"message": "Grupo actualizado", "grupo": grupo}
 
 
+# Asegúrate de tener este import arriba con los otros
 @router.delete("/{id_grupo}")
 async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
+    # 1. Obtener datos del grupo ANTES de borrarlo
     stmt = (
         select(Grupo)
-        .options(joinedload(Grupo.curso_aperturado))
+        .options(joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso))
         .where(Grupo.id == id_grupo)
     )
     grupo = (await db.execute(stmt)).scalars().first()
     
     if not grupo: raise HTTPException(404, "Grupo no encontrado")
     
-    id_docente_afectado = grupo.id_docente
+    # Guardamos estos datos porque al borrar el grupo se pierden
+    nombre_grupo = grupo.nombre
+    ciclo_grupo = grupo.curso_aperturado.curso.ciclo
     id_periodo = grupo.curso_aperturado.id_periodo
+    id_docente_afectado = grupo.id_docente
     
+    # ---------------------------------------------------------
+    # 2. BORRADO FÍSICO EXPLICITO DE LA MALLA (LA CORRECCIÓN)
+    # ---------------------------------------------------------
+    # Esto borra las filas "fantasmas" (esqueletos) que tu código anterior dejaba vivas.
+    stmt_del_horario = (
+        delete(Horario)
+        .where(
+            Horario.id_periodo == id_periodo,
+            Horario.ciclo == ciclo_grupo,
+            Horario.grupo == nombre_grupo 
+        )
+    )
+    await db.execute(stmt_del_horario)
+    
+    # 3. Borrado de Sesiones (Manual para asegurar limpieza)
+    stmt_del_sesiones = delete(Sesion).where(Sesion.id_grupo == id_grupo)
+    await db.execute(stmt_del_sesiones)
+
+    # 4. Ahora sí, borramos el Grupo
     await db.delete(grupo)
-    await db.commit() # Borrar grupo
     
+    # 5. Actualizar docente (si tenía uno asignado)
     if id_docente_afectado:
+        await db.commit() # Commit intermedio para que el update de horas lea bien
         await actualizar_disponibilidad_docente(db, id_docente_afectado, id_periodo)
-        await db.commit()
+    
+    await db.commit()
         
-    return {"message": "Grupo eliminado"}
+    return {"message": "Grupo y todos sus rastros eliminados FÍSICAMENTE"}
 
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
