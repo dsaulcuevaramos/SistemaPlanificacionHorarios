@@ -32,10 +32,18 @@ origins = ["http://localhost",     # Para pruebas locales simples
     "http://5.161.126.165",       # <--- IMPORTANTE: La IP pública de tu servidor (Si sirves el front ahí)
     "http://5.161.126.165:80",]
 """
-origins = ["*"]  # Por ahora permitimos todo para desarrollo
+origins = [
+    "http://localhost",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:5173",
+    "http://5.161.126.165",      # Tu IP
+    "http://5.161.126.165:8080", # Tu IP con puerto Frontend
+    "*"                          # Comodín (Úsalo solo si estás desesperado)
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

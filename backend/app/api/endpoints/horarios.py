@@ -148,6 +148,8 @@ async def read_bloques(id_turno: int, db: AsyncSession = Depends(get_db)):
     """Trae los bloques (horas) de un turno específico."""
     return await crud_bloque.get_by_turno(db, id_turno=id_turno)
 
+
+
 @router.get("/periodo/{id_periodo}", response_model=List[HorarioResponse])
 async def get_horario_periodo(id_periodo: int, db: AsyncSession = Depends(get_db)):
     """Trae todo el horario ya asignado (Fichas en la grilla)."""
@@ -155,14 +157,20 @@ async def get_horario_periodo(id_periodo: int, db: AsyncSession = Depends(get_db
         select(Horario)
         .where(Horario.id_periodo == id_periodo, Horario.estado == 1)
         .options(
+            # --- CORRECCIÓN AQUÍ: Usar import_module para evitar crash por referencia circular ---
             joinedload(Horario.sesion).joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(
-                import_module('app.models.curso_aperturado').CursoAperturado.curso),
+                import_module('app.models.curso_aperturado').CursoAperturado.curso
+            ),
+            # -----------------------------------------------------------------------------------
             joinedload(Horario.sesion).joinedload(Sesion.grupo).joinedload(Grupo.docente),
             joinedload(Horario.bloque_horario),
             joinedload(Horario.aula)
         )
     )
-    return (await db.execute(stmt)).scalars().all()
+    # Agregamos unique() por seguridad ante joins complejos
+    result = await db.execute(stmt)
+    return result.unique().scalars().all()
+
 
 @router.get("/periodo/{id_periodo}/ciclos")
 async def get_ciclos_en_periodo(id_periodo: int, db: AsyncSession = Depends(get_db)):
@@ -286,34 +294,33 @@ async def guardar_asignacion_manual(
 
 @router.delete("/{id_horario}")
 async def eliminar_asignacion(id_horario: int, db: AsyncSession = Depends(get_db)):
-    # 1. Buscamos el horario seleccionado
+    # 1. Buscamos el horario
     horario = await db.get(Horario, id_horario)
-    if not horario: raise HTTPException(404, "Horario no encontrado")
+    if not horario:
+        raise HTTPException(404, "Horario no encontrado")
 
-    # Si es un espacio vacío, no hay nada que borrar
-    if not horario.id_sesion:
-        return {"message": "El espacio ya estaba vacío"}
-
-    id_sesion_a_borrar = horario.id_sesion
-
-    # 2. LIMPIEZA MASIVA: Buscamos TODAS las apariciones de esta sesión en la malla
-    stmt = (
-        update(Horario)
-        .where(
-            Horario.id_sesion == id_sesion_a_borrar,
-            Horario.id_periodo == horario.id_periodo
-        )
-        .values(
-            id_sesion=None,
-            id_aula=None,
-            estado=1
-        )
-    )
+    # 2. LÓGICA HÍBRIDA (Limpiar o Borrar)
+    # Si la casilla tiene datos de estructura (Ciclo/Grupo definidos), la LIMPIAMOS (Esqueleto)
+    # Si la casilla NO tiene estructura (fue un insert sucio), la BORRAMOS física.
     
-    await db.execute(stmt)
-    await db.commit()
+    es_esqueleto_valido = (horario.ciclo > 0) and (horario.grupo not in [None, '', '-'])
     
-    return {"message": "Curso retirado del horario (todas sus horas)"}
+    if es_esqueleto_valido:
+        # ESTRATEGIA: LIMPIAR (Volver a esqueleto)
+        horario.id_sesion = None
+        horario.id_aula = None
+        horario.estado = 1
+        # No tocamos ciclo/grupo/bloque
+    else:
+        # ESTRATEGIA: BORRAR (Era basura o insert manual sin estructura)
+        await db.delete(horario)
+    
+    try:
+        await db.commit()
+        return {"message": "Asignación retirada"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(500, f"Error al eliminar: {str(e)}")
 
 
 
