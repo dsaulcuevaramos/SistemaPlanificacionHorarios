@@ -214,95 +214,73 @@ async def guardar_asignacion_manual(
     data: HorarioCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    stmt_sesion = (
-        select(Sesion)
-        .join(Grupo).join(CursoAperturado).join(Curso)
-        .options(
-            joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso),
-            joinedload(Sesion.grupo).joinedload(Grupo.docente)
-        )
-        .where(Sesion.id == data.id_sesion)
-    )
-    sesion_actual = (await db.execute(stmt_sesion)).scalar()
-    if not sesion_actual: raise HTTPException(404, "Sesión no encontrada")
+    # 1. DATOS SESIÓN
+    stmt_sesion = select(Sesion).options(joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso)).where(Sesion.id == data.id_sesion)
+    sesion = (await db.execute(stmt_sesion)).scalar()
+    if not sesion: raise HTTPException(404, "Sesión no encontrada")
     
-    mi_ciclo = sesion_actual.grupo.curso_aperturado.curso.ciclo
-    mi_grupo_nombre = sesion_actual.grupo.nombre
-    duracion = sesion_actual.duracion_horas
+    mi_ciclo = sesion.grupo.curso_aperturado.curso.ciclo
+    mi_grupo = sesion.grupo.nombre
+    duracion = sesion.duracion_horas
 
-    bloque_inicio = await db.get(BloqueHorario, data.id_bloque)
-    if not bloque_inicio: raise HTTPException(404, "Bloque no encontrado")
+    # 2. BLOQUES
+    bloque_ini = await db.get(BloqueHorario, data.id_bloque)
+    stmt_bloques = select(BloqueHorario).where(
+        BloqueHorario.id_turno == bloque_ini.id_turno,
+        BloqueHorario.dia_semana == bloque_ini.dia_semana,
+        BloqueHorario.orden >= bloque_ini.orden
+    ).order_by(BloqueHorario.orden).limit(duracion)
+    bloques = (await db.execute(stmt_bloques)).scalars().all()
+    
+    if len(bloques) < duracion: raise HTTPException(400, "Espacio insuficiente")
+    ids_bloques = [b.id for b in bloques]
 
-    # Validar espacio en el turno
-    stmt_bloques = (
-        select(BloqueHorario)
-        .where(
-            BloqueHorario.id_turno == bloque_inicio.id_turno,
-            BloqueHorario.dia_semana == bloque_inicio.dia_semana,
-            BloqueHorario.orden >= bloque_inicio.orden
-        )
-        .order_by(BloqueHorario.orden)
-        .limit(duracion)
-    )
-    bloques_validos = (await db.execute(stmt_bloques)).scalars().all()
-
-    if len(bloques_validos) < duracion:
-        raise HTTPException(400, f"No hay espacio suficiente. La clase dura {duracion} horas.")
-
-    ids_bloques_necesarios = [b.id for b in bloques_validos]
-
-    # Validar Docente
-    if sesion_actual.grupo.id_docente:
-        stmt_cruce = select(Horario).join(Sesion).join(Grupo).where(
-            Horario.id_periodo == data.id_periodo,
-            Horario.id_bloque.in_(ids_bloques_necesarios),
-            Horario.estado == 1,
-            Grupo.id_docente == sesion_actual.grupo.id_docente,
-            Sesion.id != sesion_actual.id 
-        )
-        if (await db.execute(stmt_cruce)).first():
-            raise HTTPException(400, "El Docente ya tiene clase asignada (cruce).")
-
-    # Insertar o Actualizar
-    stmt_existentes = select(Horario).where(
+    # 3. BUSCAR ESQUELETO (Clave: Filtrar por Ciclo y Grupo)
+    stmt_exist = select(Horario).where(
         Horario.id_periodo == data.id_periodo,
-        Horario.ciclo == mi_ciclo,
-        Horario.grupo == mi_grupo_nombre,
-        Horario.id_bloque.in_(ids_bloques_necesarios)
+        Horario.ciclo == mi_ciclo,       # <--- IMPORTANTE
+        Horario.grupo == mi_grupo,       # <--- IMPORTANTE
+        Horario.id_bloque.in_(ids_bloques)
     )
-    casillas_existentes = (await db.execute(stmt_existentes)).scalars().all()
-    mapa_existentes = {h.id_bloque: h for h in casillas_existentes}
+    existentes = (await db.execute(stmt_exist)).scalars().all()
+    mapa = {h.id_bloque: h for h in existentes}
 
-    operaciones_update = []
-    operaciones_insert = []
+    # 4. LIMPIAR POSICIÓN ANTERIOR (Evitar duplicados)
+    await db.execute(
+        update(Horario)
+        .where(
+            Horario.id_sesion == data.id_sesion,
+            Horario.id_periodo == data.id_periodo,
+            Horario.id_bloque.notin_(ids_bloques) # No borrar donde acabo de ponerlo
+        )
+        .values(id_sesion=None, id_aula=None, estado=1)
+    )
 
-    for id_bloque_target in ids_bloques_necesarios:
-        casilla = mapa_existentes.get(id_bloque_target)
+    # 5. ASIGNAR (Update o Insert)
+    nuevos = []
+    for id_b in ids_bloques:
+        casilla = mapa.get(id_b)
         if casilla:
-            if casilla.id_sesion is not None and casilla.id_sesion != data.id_sesion:
-                 raise HTTPException(400, "Este espacio ya está ocupado por otro curso del grupo.")
+            # Si ya tiene otra sesión, error
+            if casilla.id_sesion and casilla.id_sesion != data.id_sesion:
+                raise HTTPException(400, "Espacio ocupado")
             casilla.id_sesion = data.id_sesion
             casilla.id_aula = data.id_aula
-            casilla.estado = 1
-            operaciones_update.append(casilla)
         else:
-            nuevo = Horario(
-                id_sesion=data.id_sesion, id_bloque=id_bloque_target, id_periodo=data.id_periodo,
-                id_aula=data.id_aula, ciclo=mi_ciclo, grupo=mi_grupo_nombre, estado=1
-            )
-            operaciones_insert.append(nuevo)
-
-    try:
-        if operaciones_insert: db.add_all(operaciones_insert)
-        for up in operaciones_update: db.add(up)
-        await db.commit()
-        return {"message": "Asignado correctamente"}
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(400, "Error: Cruce detectado.")
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(500, str(e))
+            # Si no existe esqueleto, crearlo bien
+            nuevos.append(Horario(
+                id_periodo=data.id_periodo,
+                id_bloque=id_b,
+                id_sesion=data.id_sesion,
+                id_aula=data.id_aula,
+                ciclo=mi_ciclo,      # <--- NO OLVIDAR
+                grupo=mi_grupo,      # <--- NO OLVIDAR
+                estado=1
+            ))
+    
+    if nuevos: db.add_all(nuevos)
+    await db.commit()
+    return {"message": "Guardado"}
 
 
 
