@@ -332,16 +332,38 @@ async def eliminar_horario(id_horario: int, db: AsyncSession = Depends(get_db)):
 # de tu archivo gestion_horarios.py aquí mismo.
 
 
-
 @router.post("/autogenerar-ciclo/{id_periodo}/{ciclo}")
 async def autogenerar_por_ciclo(
     id_periodo: int,
     ciclo: int,
     db: AsyncSession = Depends(get_db)
 ):
-    print(f"⚡ INICIANDO AUTOGENERACIÓN CICLO {ciclo}...")
+    print(f"⚡ AUTOGENERANDO CICLO {ciclo}...")
 
-    # A. BUSCAR PENDIENTES
+    # 1. RECUPERAR TODOS LOS BLOQUES Y MAPEARLOS POR TURNO
+    # Esto es la clave: Saber qué 'orden' existe para cada 'id_turno'
+    all_bloques = (await db.execute(select(BloqueHorario))).scalars().all()
+    
+    # Mapa para el Motor: { id_turno: [orden1, orden2, orden11...] }
+    mapa_ordenes_por_turno = {} 
+    # Mapa para Guardar: { (dia, orden, id_turno): id_bloque_bd }
+    mapa_ids_bloques = {}
+
+    for b in all_bloques:
+        # Llenar mapa para el motor
+        if b.id_turno not in mapa_ordenes_por_turno:
+            mapa_ordenes_por_turno[b.id_turno] = []
+        mapa_ordenes_por_turno[b.id_turno].append(b.orden)
+        
+        # Llenar mapa para guardar después
+        key = (b.dia_semana.capitalize(), b.orden, b.id_turno)
+        mapa_ids_bloques[key] = b.id
+
+    # Ordenamos las listas de órdenes para que el motor vaya en orden
+    for t in mapa_ordenes_por_turno:
+        mapa_ordenes_por_turno[t].sort()
+
+    # 2. BUSCAR SESIONES PENDIENTES
     stmt_pendientes = (
         select(Sesion)
         .join(Grupo).join(CursoAperturado).join(Curso)
@@ -361,35 +383,28 @@ async def autogenerar_por_ciclo(
     sesiones_pendientes = (await db.execute(stmt_pendientes)).unique().scalars().all()
     
     if not sesiones_pendientes:
-        return {"status": "info", "message": f"No hay sesiones pendientes para el Ciclo {ciclo}."}
+        return {"status": "info", "message": "No hay pendientes."}
 
-    print(f"--> Se encontraron {len(sesiones_pendientes)} sesiones pendientes.")
-
-    # B. BUSCAR OCUPADOS (Para que el motor no pise clases)
+    # 3. BUSCAR OCUPADOS (Para evitar cruces)
     stmt_ocupados = (
         select(Horario)
         .join(Sesion).join(Grupo)
         .where(Horario.id_periodo == id_periodo, Horario.estado == 1)
-        .options(
-            joinedload(Horario.bloque_horario), 
-            joinedload(Horario.sesion).joinedload(Sesion.grupo)
-        )
+        .options(joinedload(Horario.bloque_horario), joinedload(Horario.sesion).joinedload(Sesion.grupo))
     )
     horarios_ocupados_objs = (await db.execute(stmt_ocupados)).scalars().all()
     
     lista_ocupados = []
     for h in horarios_ocupados_objs:
         if not h.bloque_horario: continue
-        # Normalizamos el día a Capitalize por si acaso (Lunes, Martes...)
-        dia_norm = h.bloque_horario.dia_semana.capitalize()
         lista_ocupados.append({
-            'dia': dia_norm,
+            'dia': h.bloque_horario.dia_semana.capitalize(),
             'id_bloque': h.bloque_horario.orden,
             'id_docente': h.sesion.grupo.id_docente, 
             'grupo_uid': h.sesion.grupo.id 
         })
 
-    # C. PREPARAR DATOS PARA EL MOTOR
+    # 4. PREPARAR DATOS PARA EL MOTOR (Usando ID_TURNO)
     data_sesiones = []
     for s in sesiones_pendientes:
         data_sesiones.append({
@@ -397,93 +412,64 @@ async def autogenerar_por_ciclo(
             "ID_DOCENTE": s.grupo.id_docente,
             "GRUPO": s.grupo.nombre,
             "GRUPO_UID": s.grupo.id,
-            "TURNO_GRUPO": s.grupo.turno.nombre,
+            "ID_TURNO": s.grupo.id_turno, # <--- USAMOS ID, NO NOMBRE
             "DURACION_HORAS": s.duracion_horas,
-            "CURSO": s.grupo.curso_aperturado.curso.nombre,
             "CICLO": s.grupo.curso_aperturado.curso.ciclo, 
             "DIA": None, "BLOQUE_ORDEN": None
         })
     df_sesiones = pd.DataFrame(data_sesiones)
     
-    # Obtener TODOS los bloques posibles (para que el motor sepa qué órdenes existen 1..14)
-    stmt_bloques_motor = select(BloqueHorario).distinct(BloqueHorario.orden)
-    bloques_result = (await db.execute(stmt_bloques_motor)).scalars().all()
-    df_bloques = pd.DataFrame([{'orden': b.orden} for b in bloques_result])
+    # Dataframe dummy de bloques (el motor usará el diccionario, esto es por compatibilidad)
+    df_bloques_dummy = pd.DataFrame({'orden': []}) 
 
-    # EJECUTAR MOTOR
-    try:
-        motor = GeneradorHorario(df_sesiones, df_bloques, horarios_ocupados=lista_ocupados)
-        df_resultado, fallos = motor.ejecutar()
-        print(f"--> Motor finalizado. Propuestas: {len(df_resultado)}")
-    except Exception as e:
-        print(f"❌ ERROR EN MOTOR: {e}")
-        traceback.print_exc()
-        raise HTTPException(500, f"Error en algoritmo: {e}")
+    # 5. EJECUTAR MOTOR
+    motor = GeneradorHorario(
+        df_sesiones, 
+        df_bloques_dummy, 
+        horarios_ocupados=lista_ocupados,
+        bloques_reales_por_turno=mapa_ordenes_por_turno # <--- LA MAGIA
+    )
+    df_resultado, fallos = motor.ejecutar()
 
-    # D. GUARDAR RESULTADOS (UPSERT)
-    
-    # 1. Mapa Maestro de Bloques (Clave compuesta para buscar rápido)
-    all_bloques = (await db.execute(select(BloqueHorario))).scalars().all()
-    mapa_bloques = {}
-    for b in all_bloques:
-        # Clave: (Día Capitalizado, Orden, ID_Turno)
-        key = (b.dia_semana.capitalize(), b.orden, b.id_turno)
-        mapa_bloques[key] = b.id
-
-    # 2. Mapa Turnos de Sesión
-    mapa_sesion_turno = {s.id: s.grupo.id_turno for s in sesiones_pendientes}
-    
+    # 6. GUARDAR RESULTADOS
     lista_para_upsert = []
+    mapa_sesion_turno = {s.id: s.grupo.id_turno for s in sesiones_pendientes}
 
     for _, row in df_resultado.iterrows():
         if row['DIA'] and row['BLOQUE_ORDEN']:
-            duracion = int(row['DURACION_HORAS'])
+            dia_raw = row['DIA'].capitalize()
             orden_inicio = int(row['BLOQUE_ORDEN'])
-            dia_raw = row['DIA'].capitalize() # Asegurar formato "Lunes"
+            duracion = int(row['DURACION_HORAS'])
             id_sesion = int(row['ID_SESION'])
-            nombre_grupo = str(row['GRUPO'])
-            ciclo_actual = int(row['CICLO'])
+            id_turno = mapa_sesion_turno.get(id_sesion)
             
-            # El turno es CRÍTICO. El bloque debe existir en ESE turno.
-            id_turno_grupo = mapa_sesion_turno.get(id_sesion)
-
             for i in range(duracion):
                 orden_actual = orden_inicio + i
                 
-                # Buscamos el ID real en la BD
-                key_busqueda = (dia_raw, orden_actual, id_turno_grupo)
-                id_bloque_bd = mapa_bloques.get(key_busqueda)
+                # Buscamos el ID real del bloque en BD
+                # Como el motor usó 'mapa_ordenes_por_turno', sabemos que este bloque EXISTE.
+                key = (dia_raw, orden_actual, id_turno)
+                id_bloque_bd = mapa_ids_bloques.get(key)
                 
                 if id_bloque_bd:
                     lista_para_upsert.append({
                         "id_periodo": id_periodo,
                         "id_bloque": id_bloque_bd,
-                        "ciclo": ciclo_actual,
-                        "grupo": nombre_grupo,
+                        "ciclo": int(row['CICLO']),
+                        "grupo": str(row['GRUPO']),
                         "id_sesion": id_sesion,
                         "estado": 1,
                         "id_aula": None 
                     })
-                else:
-                    # Debug: Por qué no encontró bloque?
-                    print(f"⚠️ ALERTA: El motor propuso {dia_raw} orden {orden_actual} para turno {id_turno_grupo}, pero ese bloque NO EXISTE en la BD.")
 
     if lista_para_upsert:
-        print(f"--> Insertando/Actualizando {len(lista_para_upsert)} registros en BD...")
         stmt = pg_insert(Horario).values(lista_para_upsert)
         stmt = stmt.on_conflict_do_update(
             constraint='uq_horario_casilla', 
             set_={ "id_sesion": stmt.excluded.id_sesion, "estado": 1 }
         )
-        try:
-            await db.execute(stmt)
-            await db.commit()
-        except Exception as e:
-            await db.rollback()
-            print(f"❌ ERROR DB: {e}")
-            raise HTTPException(500, f"Error guardando horario: {str(e)}")
-    else:
-        print("⚠️ CUIDADO: El motor generó resultados pero la validación de bloques los descartó todos. Revisa los turnos.")
+        await db.execute(stmt)
+        await db.commit()
 
     return {"status": "success", "generados": len(lista_para_upsert), "fallos": len(fallos)}
 
