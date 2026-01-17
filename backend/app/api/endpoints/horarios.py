@@ -118,12 +118,27 @@ async def validar_reglas_asignacion(
 #  2. ENDPOINTS DE DATOS (GET) - LO QUE TE FALTABA
 # =====================================================================
 
-@router.get("/sesiones/pendientes/{id_periodo}", response_model=List[SesionFullResponse]) # <--- CAMBIO AQUÍ
+@router.get("/sesiones/pendientes/{id_periodo}")
 async def get_sesiones_pendientes(id_periodo: int, db: AsyncSession = Depends(get_db)):
-    """
-    Obtiene todas las sesiones del periodo para mostrarlas en el Sidebar.
-    """
-    return await crud_sesion.get_pendientes_export(db, id_periodo)
+    # Buscamos sesiones activas que NO estén en la tabla horario
+    stmt = (
+        select(Sesion)
+        .join(Grupo).join(CursoAperturado).join(Curso)
+        .outerjoin(Horario) # Left join
+        .where(
+            CursoAperturado.id_periodo == id_periodo,
+            Sesion.estado == 1,
+            Horario.id == None # Solo las que no tienen horario
+        )
+        .options(
+            # ¡CRUCIAL! Cargar toda la jerarquía para el filtro del frontend
+            joinedload(Sesion.grupo).joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso),
+            joinedload(Sesion.grupo).joinedload(Grupo.docente),
+            joinedload(Sesion.grupo).joinedload(Grupo.turno)
+        )
+    )
+    result = await db.execute(stmt)
+    return result.unique().scalars().all()
 
 @router.get("/bloques/turno/{id_turno}", response_model=List[BloqueHorarioResponse])
 async def read_bloques(id_turno: int, db: AsyncSession = Depends(get_db)):
@@ -288,37 +303,25 @@ async def guardar_asignacion_manual(
 
 
 @router.delete("/{id_horario}")
-async def eliminar_horario(id_horario: int, db: AsyncSession = Depends(get_db)):
-    """
-    Elimina la asignación de horario.
-    MEJORA: Busca la sesión asociada y elimina TODOS los bloques de esa sesión
-    en el mismo periodo (para que no queden horas sueltas).
-    """
-    # 1. Buscar el horario específico que se quiere borrar
-    horario_a_borrar = await db.get(Horario, id_horario)
-    
-    if not horario_a_borrar:
-        # Si no existe, devolvemos 404 pero no pasa nada grave
-        raise HTTPException(status_code=404, detail="Asignación no encontrada (tal vez ya se borró)")
+async def eliminar_asignacion(id_horario: int, db: AsyncSession = Depends(get_db)):
+    # 1. Buscamos el horario
+    horario = await db.get(Horario, id_horario)
+    if not horario:
+        raise HTTPException(404, "Horario no encontrado")
 
-    # 2. Identificar la sesión y el periodo
-    id_sesion = horario_a_borrar.id_sesion
-    id_periodo = horario_a_borrar.id_periodo
-
-    # 3. Borrar TODOS los registros de esa sesión en este periodo
-    # Así limpiamos las 2 o 3 horas completas de la clase
-    stmt_delete = (
-        delete(Horario)
-        .where(
-            Horario.id_sesion == id_sesion,
-            Horario.id_periodo == id_periodo
-        )
-    )
+    # 2. ESTRATEGIA: "Limpiar" en lugar de "Borrar"
+    # Si borramos la fila, perdemos el espacio en la grilla (el esqueleto).
+    # Lo que queremos es quitar la sesión (id_sesion = None) y liberar el espacio.
     
-    await db.execute(stmt_delete)
+    horario.id_sesion = None
+    horario.id_aula = None
+    horario.estado = 1 # Disponible / Vacío
+    
+    # IMPORTANTE: No tocamos 'ciclo', 'grupo' ni 'id_bloque' para que la celda
+    # siga existiendo en la base de datos y el Frontend pueda dibujarla vacía.
+    
     await db.commit()
-    
-    return {"message": "Sesión liberada completamente del horario"}
+    return {"message": "Asignación retirada correctamente (Espacio liberado)"}
 
 
 

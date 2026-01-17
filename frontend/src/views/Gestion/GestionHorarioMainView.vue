@@ -187,32 +187,44 @@ const pendientesFiltrados = computed(() => {
 const gruposDelCiclo = computed(() => {
   if (!cicloSeleccionado.value || !idTurnoSeleccionado.value) return [];
 
-  // Función filtro BLINDADA
-  const filtro = (item) => {
-      // 1. Si el item no existe, falso
-      if (!item) return false;
+  const gruposSet = new Set();
+
+  // 1. Buscar en PENDIENTES (Sesiones sin asignar)
+  sesionesPendientes.value.forEach(s => {
+      // Navegación segura: s.grupo -> curso_aperturado -> curso
+      const ciclo = s.grupo?.curso_aperturado?.curso?.ciclo;
+      const turno = s.grupo?.id_turno;
       
-      // 2. Si el item no tiene grupo (esto causaba tu error), falso
-      if (!item.grupo) return false;
+      if (ciclo === cicloSeleccionado.value && turno === idTurnoSeleccionado.value) {
+          if (s.grupo?.nombre) gruposSet.add(s.grupo.nombre);
+      }
+  });
 
-      // 3. Comparación segura usando '?.'
-      return item.grupo?.curso_aperturado?.curso?.ciclo === cicloSeleccionado.value && 
-            item.grupo?.id_turno === idTurnoSeleccionado.value;
-  };
+  // 2. Buscar en HORARIO ASIGNADO (Aquí estaba el error)
+  horarioAsignado.value.forEach(h => {
+      // A. Si tiene sesión asignada, miramos dentro de la sesión
+      if (h.sesion) {
+          const ciclo = h.sesion.grupo?.curso_aperturado?.curso?.ciclo;
+          const turno = h.sesion.grupo?.id_turno;
+          const nombre = h.sesion.grupo?.nombre;
+          
+          if (ciclo === cicloSeleccionado.value && turno === idTurnoSeleccionado.value) {
+              if (nombre) gruposSet.add(nombre);
+          }
+      } 
+      // B. Si es ESQUELETO (Vacio), miramos las columnas directas del Horario
+      // (Recuerda que agregamos 'ciclo' y 'grupo' (string) a la tabla horario)
+      else {
+          // Necesitamos saber el turno del bloque para filtrar
+          const turnoBloque = h.bloque_horario?.id_turno;
+          
+          if (h.ciclo === cicloSeleccionado.value && turnoBloque === idTurnoSeleccionado.value) {
+              if (h.grupo) gruposSet.add(h.grupo); // h.grupo es un string aquí
+          }
+      }
+  });
 
-  // Filtrar pendientes
-  const enPendientes = sesionesPendientes.value
-    .filter(s => filtro(s))
-    .map(s => s.grupo?.nombre);
-
-  // Filtrar asignados (Aquí es donde fallaba porque h.sesion era undefined)
-  const enAsignados = horarioAsignado.value
-    .filter(h => h.sesion && filtro(h.sesion)) // Verificamos h.sesion antes de pasarlo
-    .map(h => h.sesion?.grupo?.nombre);
-
-  // Unir y limpiar
-  const unicos = new Set([...enPendientes, ...enAsignados].filter(n => n)); // Filtra nulos
-  return Array.from(unicos).sort(); 
+  return Array.from(gruposSet).sort(); 
 });
 
 
