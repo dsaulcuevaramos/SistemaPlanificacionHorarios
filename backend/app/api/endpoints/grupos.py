@@ -336,41 +336,54 @@ async def actualizar_grupo(id_grupo: int, payload: GrupoUpdate, db: AsyncSession
     return {"message": "Grupo actualizado", "grupo": grupo}
 
 
+# En app/api/endpoints/grupos.py
+
 @router.delete("/{id_grupo}")
 async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
-    # 1. Obtener el grupo
-    stmt = select(Grupo).options(joinedload(Grupo.curso_aperturado)).where(Grupo.id == id_grupo)
+    # 1. Obtener datos del grupo para saber qué borrar en Horario
+    stmt = (
+        select(Grupo)
+        .options(joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso))
+        .where(Grupo.id == id_grupo)
+    )
     grupo = (await db.execute(stmt)).scalars().first()
     
     if not grupo: raise HTTPException(404, "Grupo no encontrado")
     
-    id_docente_afectado = grupo.id_docente
+    # Datos clave para borrar el rastro en Horario
+    nombre_grupo = grupo.nombre
+    ciclo_grupo = grupo.curso_aperturado.curso.ciclo
     id_periodo = grupo.curso_aperturado.id_periodo
+    id_docente_afectado = grupo.id_docente
+    
+    # 2. BORRADO FÍSICO TOTAL DE HORARIOS (Esqueletos y Asignaciones)
+    # Borramos todo lo que coincida con este Grupo, Ciclo y Periodo.
+    # Esto elimina el conflicto "uq_horario_casilla" para el futuro insert.
+    stmt_del_horario = (
+        delete(Horario)
+        .where(
+            Horario.id_periodo == id_periodo,
+            Horario.ciclo == ciclo_grupo,
+            Horario.grupo == nombre_grupo
+        )
+    )
+    await db.execute(stmt_del_horario)
 
-    # 2. OBTENER IDs DE LAS SESIONES DEL GRUPO
-    stmt_ids = select(Sesion.id).where(Sesion.id_grupo == id_grupo)
-    ids_sesiones = (await db.execute(stmt_ids)).scalars().all()
+    # 3. Borrar Sesiones
+    stmt_del_sesiones = delete(Sesion).where(Sesion.id_grupo == id_grupo)
+    await db.execute(stmt_del_sesiones)
 
-    # 3. LIMPIEZA PROFUNDA (ESTO ES LO QUE FALTABA)
-    if ids_sesiones:
-        # A. Borrar referencias en HORARIO (El candado que te daba error 500)
-        stmt_del_horario = delete(Horario).where(Horario.id_sesion.in_(ids_sesiones))
-        await db.execute(stmt_del_horario)
-
-        # B. Ahora sí, borrar las SESIONES
-        stmt_del_sesiones = delete(Sesion).where(Sesion.id == Sesion.id).where(Sesion.id_grupo == id_grupo)
-        await db.execute(stmt_del_sesiones)
-
-    # 4. Finalmente, borrar el GRUPO
+    # 4. Borrar el Grupo
     await db.delete(grupo)
     
-    # 5. Actualizar disponibilidad del docente si es necesario
+    # 5. Actualizar docente (si aplica)
     if id_docente_afectado:
-        await db.commit() # Commit parcial
+        await db.commit()
         await actualizar_disponibilidad_docente(db, id_docente_afectado, id_periodo)
     
     await db.commit()
-    return {"message": "Grupo eliminado y horario limpiado correctamente"}
+        
+    return {"message": "Grupo eliminado FÍSICAMENTE (Malla liberada)"}
 
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
