@@ -339,6 +339,8 @@ async def autogenerar_por_ciclo(
     ciclo: int,
     db: AsyncSession = Depends(get_db)
 ):
+    print(f"⚡ INICIANDO AUTOGENERACIÓN CICLO {ciclo}...")
+
     # A. BUSCAR PENDIENTES
     stmt_pendientes = (
         select(Sesion)
@@ -361,7 +363,9 @@ async def autogenerar_por_ciclo(
     if not sesiones_pendientes:
         return {"status": "info", "message": f"No hay sesiones pendientes para el Ciclo {ciclo}."}
 
-    # B. BUSCAR OCUPADOS (BLINDAJE)
+    print(f"--> Se encontraron {len(sesiones_pendientes)} sesiones pendientes.")
+
+    # B. BUSCAR OCUPADOS (Para que el motor no pise clases)
     stmt_ocupados = (
         select(Horario)
         .join(Sesion).join(Grupo)
@@ -376,14 +380,16 @@ async def autogenerar_por_ciclo(
     lista_ocupados = []
     for h in horarios_ocupados_objs:
         if not h.bloque_horario: continue
+        # Normalizamos el día a Capitalize por si acaso (Lunes, Martes...)
+        dia_norm = h.bloque_horario.dia_semana.capitalize()
         lista_ocupados.append({
-            'dia': h.bloque_horario.dia_semana,
+            'dia': dia_norm,
             'id_bloque': h.bloque_horario.orden,
             'id_docente': h.sesion.grupo.id_docente, 
             'grupo_uid': h.sesion.grupo.id 
         })
 
-    # C. MOTOR
+    # C. PREPARAR DATOS PARA EL MOTOR
     data_sesiones = []
     for s in sesiones_pendientes:
         data_sesiones.append({
@@ -399,48 +405,71 @@ async def autogenerar_por_ciclo(
         })
     df_sesiones = pd.DataFrame(data_sesiones)
     
-    stmt_bloques = select(BloqueHorario).distinct(BloqueHorario.orden)
-    bloques_result = (await db.execute(stmt_bloques)).scalars().all()
+    # Obtener TODOS los bloques posibles (para que el motor sepa qué órdenes existen 1..14)
+    stmt_bloques_motor = select(BloqueHorario).distinct(BloqueHorario.orden)
+    bloques_result = (await db.execute(stmt_bloques_motor)).scalars().all()
     df_bloques = pd.DataFrame([{'orden': b.orden} for b in bloques_result])
 
-    motor = GeneradorHorario(df_sesiones, df_bloques, horarios_ocupados=lista_ocupados)
-    df_resultado, fallos = motor.ejecutar()
+    # EJECUTAR MOTOR
+    try:
+        motor = GeneradorHorario(df_sesiones, df_bloques, horarios_ocupados=lista_ocupados)
+        df_resultado, fallos = motor.ejecutar()
+        print(f"--> Motor finalizado. Propuestas: {len(df_resultado)}")
+    except Exception as e:
+        print(f"❌ ERROR EN MOTOR: {e}")
+        traceback.print_exc()
+        raise HTTPException(500, f"Error en algoritmo: {e}")
 
-    # D. GUARDADO (UPSERT)
+    # D. GUARDAR RESULTADOS (UPSERT)
+    
+    # 1. Mapa Maestro de Bloques (Clave compuesta para buscar rápido)
     all_bloques = (await db.execute(select(BloqueHorario))).scalars().all()
     mapa_bloques = {}
     for b in all_bloques:
-        mapa_bloques[(b.dia_semana, b.orden, b.id_turno)] = b.id
+        # Clave: (Día Capitalizado, Orden, ID_Turno)
+        key = (b.dia_semana.capitalize(), b.orden, b.id_turno)
+        mapa_bloques[key] = b.id
 
+    # 2. Mapa Turnos de Sesión
     mapa_sesion_turno = {s.id: s.grupo.id_turno for s in sesiones_pendientes}
+    
     lista_para_upsert = []
 
     for _, row in df_resultado.iterrows():
         if row['DIA'] and row['BLOQUE_ORDEN']:
             duracion = int(row['DURACION_HORAS'])
             orden_inicio = int(row['BLOQUE_ORDEN'])
-            dia = row['DIA']
+            dia_raw = row['DIA'].capitalize() # Asegurar formato "Lunes"
             id_sesion = int(row['ID_SESION'])
             nombre_grupo = str(row['GRUPO'])
             ciclo_actual = int(row['CICLO'])
+            
+            # El turno es CRÍTICO. El bloque debe existir en ESE turno.
             id_turno_grupo = mapa_sesion_turno.get(id_sesion)
 
             for i in range(duracion):
                 orden_actual = orden_inicio + i
-                id_bloque = mapa_bloques.get((dia, orden_actual, id_turno_grupo))
                 
-                if id_bloque:
+                # Buscamos el ID real en la BD
+                key_busqueda = (dia_raw, orden_actual, id_turno_grupo)
+                id_bloque_bd = mapa_bloques.get(key_busqueda)
+                
+                if id_bloque_bd:
                     lista_para_upsert.append({
                         "id_periodo": id_periodo,
-                        "id_bloque": id_bloque,
+                        "id_bloque": id_bloque_bd,
                         "ciclo": ciclo_actual,
                         "grupo": nombre_grupo,
                         "id_sesion": id_sesion,
                         "estado": 1,
                         "id_aula": None 
                     })
-    
+                else:
+                    # Debug: Por qué no encontró bloque?
+                    print(f"⚠️ ALERTA: El motor propuso {dia_raw} orden {orden_actual} para turno {id_turno_grupo}, pero ese bloque NO EXISTE en la BD.")
+
     if lista_para_upsert:
+        print(f"--> Insertando/Actualizando {len(lista_para_upsert)} registros en BD...")
         stmt = pg_insert(Horario).values(lista_para_upsert)
         stmt = stmt.on_conflict_do_update(
             constraint='uq_horario_casilla', 
@@ -451,7 +480,10 @@ async def autogenerar_por_ciclo(
             await db.commit()
         except Exception as e:
             await db.rollback()
-            raise HTTPException(500, f"Error en BD: {str(e)}")
+            print(f"❌ ERROR DB: {e}")
+            raise HTTPException(500, f"Error guardando horario: {str(e)}")
+    else:
+        print("⚠️ CUIDADO: El motor generó resultados pero la validación de bloques los descartó todos. Revisa los turnos.")
 
     return {"status": "success", "generados": len(lista_para_upsert), "fallos": len(fallos)}
 
