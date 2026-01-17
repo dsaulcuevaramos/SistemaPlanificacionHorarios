@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, distinct, func, update, and_, delete, cast, Integer
 from sqlalchemy.orm import joinedload, aliased
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.database import get_db
 # Modelos
@@ -13,7 +12,7 @@ from app.models.curso import Curso
 from app.models.docente import Docente
 from app.models.bloque_horario import BloqueHorario
 from app.models.horario import Horario
-from app.models.sesion import Sesion
+from app.models.turno import Turno
 from app.models.contrato_docente import ContratoDocente
 from app.models.disponibilidad_docente import DisponibilidadDocente
 
@@ -157,15 +156,8 @@ async def get_grupos_by_ciclo(ciclo: int, id_periodo: int = None, db: AsyncSessi
         joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso)
     )
     result = await db.execute(stmt)
-    grupos = result.scalars().all()
-    for g in grupos:
-        # Esto permite que el front haga: if (grupo.ciclo === cicloSeleccionado)
-        setattr(g, "ciclo", g.curso_aperturado.curso.ciclo)
-        setattr(g, "curso_nombre", g.curso_aperturado.curso.nombre)
-        if g.docente:
-            setattr(g, "docente_nombre", f"{g.docente.apellido}")
-    
-    return grupos
+    return result.scalars().all()
+
 
 @router.get("/periodo/{id_periodo}/detallado")
 async def get_cursos_con_grupos(id_periodo: int, db: AsyncSession = Depends(get_db)):
@@ -203,7 +195,6 @@ async def crear_grupos_masivo(payload: GrupoCreateMasivo, db: AsyncSession = Dep
 
         # Guardamos datos clave en variables simples (Int/Str) para no depender del objeto DB
         target_periodo_id = curso_ap.id_periodo
-        target_ciclo = curso_ap.curso.ciclo
         h_teoria = int(curso_ap.curso.horas_teoricas or 0)
         h_practica = int(curso_ap.curso.horas_practicas or 0)
         horas_totales_curso = h_teoria + h_practica
@@ -257,7 +248,6 @@ async def crear_grupos_masivo(payload: GrupoCreateMasivo, db: AsyncSession = Dep
                 db.add(sesion_p)
 
             nuevos_grupos.append(nuevo_grupo)
-            await crear_esqueleto_horario(db, nuevo_grupo, target_periodo_id, target_ciclo)
         
         # 4. GUARDAR TODO (FLUSH)
         db.add_all(nuevos_grupos)
@@ -337,84 +327,56 @@ async def actualizar_grupo(id_grupo: int, payload: GrupoUpdate, db: AsyncSession
     return {"message": "Grupo actualizado", "grupo": grupo}
 
 
-# En app/api/endpoints/grupos.py
-
 @router.delete("/{id_grupo}")
 async def eliminar_grupo(id_grupo: int, db: AsyncSession = Depends(get_db)):
-    # 1. Obtener datos del grupo para localizar su rastro en el horario
     stmt = (
         select(Grupo)
-        .options(joinedload(Grupo.curso_aperturado).joinedload(CursoAperturado.curso))
+        .options(joinedload(Grupo.curso_aperturado))
         .where(Grupo.id == id_grupo)
     )
     grupo = (await db.execute(stmt)).scalars().first()
     
     if not grupo: raise HTTPException(404, "Grupo no encontrado")
     
-    # Datos para el borrado preciso
-    nombre_grupo = grupo.nombre
-    ciclo_grupo = grupo.curso_aperturado.curso.ciclo
-    id_periodo = grupo.curso_aperturado.id_periodo
     id_docente_afectado = grupo.id_docente
+    id_periodo = grupo.curso_aperturado.id_periodo
     
-    # 2. BORRADO FÍSICO DEL ESQUELETO EN HORARIO (Sin piedad)
-    # Borramos cualquier fila en 'horario' que tenga este ciclo y nombre de grupo.
-    stmt_del_horario = (
-        delete(Horario)
-        .where(
-            Horario.id_periodo == id_periodo,
-            Horario.ciclo == ciclo_grupo,
-            Horario.grupo == nombre_grupo
-        )
-    )
-    await db.execute(stmt_del_horario)
-
-    # 3. BORRADO FÍSICO DE SESIONES
-    stmt_del_sesiones = delete(Sesion).where(Sesion.id_grupo == id_grupo)
-    await db.execute(stmt_del_sesiones)
-
-    # 4. BORRADO FÍSICO DEL GRUPO
     await db.delete(grupo)
+    await db.commit() # Borrar grupo
     
-    # 5. Actualizar horas del docente
     if id_docente_afectado:
-        await db.commit() # Commit intermedio necesario
         await actualizar_disponibilidad_docente(db, id_docente_afectado, id_periodo)
-    
-    await db.commit()
+        await db.commit()
         
-    return {"message": "Grupo, Sesiones y Horario eliminados FÍSICAMENTE."}
+    return {"message": "Grupo eliminado"}
 
 
 async def crear_esqueleto_horario(db: AsyncSession, grupo_obj: Grupo, id_periodo: int, ciclo: int):
-    # 1. Traer bloques del turno
+    """
+    Crea las filas vacías (id_sesion=NULL) en la tabla Horario para un grupo nuevo.
+    """
+    # 1. Traer todos los bloques del turno de ese grupo
     stmt = select(BloqueHorario).where(
         BloqueHorario.id_turno == grupo_obj.id_turno,
         BloqueHorario.estado == 1
     )
     bloques = (await db.execute(stmt)).scalars().all()
     
-    if not bloques: return
-
-    # 2. Crear objetos Horario nuevos (INSERT directo)
-    nuevas_casillas = []
+    casillas = []
     for b in bloques:
         casilla = Horario(
-            id_sesion=None,
+            id_sesion=None,     # VACÍO POR DEFECTO
             id_bloque=b.id,
             id_periodo=id_periodo,
             id_aula=None,
-            ciclo=ciclo,
-            grupo=grupo_obj.nombre,
+            ciclo=ciclo,        # Dato redundante útil
+            grupo=grupo_obj.nombre, # Dato redundante útil
             estado=1
         )
-        nuevas_casillas.append(casilla)
+        casillas.append(casilla)
     
-    # 3. Guardar
-    if nuevas_casillas:
-        db.add_all(nuevas_casillas)
-        # Nota: No necesitamos commit aquí porque la función padre lo hará
-
+    if casillas:
+        db.add_all(casillas)
 """
 # En routers/grupos.py (Arriba, junto a las otras funciones auxiliares)
 from app.models.sesion import Sesion # Asegúrate de importar esto
