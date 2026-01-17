@@ -293,34 +293,37 @@ async def guardar_asignacion_manual(
 
 
 @router.delete("/{id_horario}")
-async def eliminar_asignacion(id_horario: int, db: AsyncSession = Depends(get_db)):
-    # 1. Buscamos el horario
-    horario = await db.get(Horario, id_horario)
-    if not horario:
-        raise HTTPException(404, "Horario no encontrado")
+async def eliminar_horario(id_horario: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina la asignación de horario.
+    MEJORA: Busca la sesión asociada y elimina TODOS los bloques de esa sesión
+    en el mismo periodo (para que no queden horas sueltas).
+    """
+    # 1. Buscar el horario específico que se quiere borrar
+    horario_a_borrar = await db.get(Horario, id_horario)
+    
+    if not horario_a_borrar:
+        # Si no existe, devolvemos 404 pero no pasa nada grave
+        raise HTTPException(status_code=404, detail="Asignación no encontrada (tal vez ya se borró)")
 
-    # 2. LÓGICA HÍBRIDA (Limpiar o Borrar)
-    # Si la casilla tiene datos de estructura (Ciclo/Grupo definidos), la LIMPIAMOS (Esqueleto)
-    # Si la casilla NO tiene estructura (fue un insert sucio), la BORRAMOS física.
+    # 2. Identificar la sesión y el periodo
+    id_sesion = horario_a_borrar.id_sesion
+    id_periodo = horario_a_borrar.id_periodo
+
+    # 3. Borrar TODOS los registros de esa sesión en este periodo
+    # Así limpiamos las 2 o 3 horas completas de la clase
+    stmt_delete = (
+        delete(Horario)
+        .where(
+            Horario.id_sesion == id_sesion,
+            Horario.id_periodo == id_periodo
+        )
+    )
     
-    es_esqueleto_valido = (horario.ciclo > 0) and (horario.grupo not in [None, '', '-'])
+    await db.execute(stmt_delete)
+    await db.commit()
     
-    if es_esqueleto_valido:
-        # ESTRATEGIA: LIMPIAR (Volver a esqueleto)
-        horario.id_sesion = None
-        horario.id_aula = None
-        horario.estado = 1
-        # No tocamos ciclo/grupo/bloque
-    else:
-        # ESTRATEGIA: BORRAR (Era basura o insert manual sin estructura)
-        await db.delete(horario)
-    
-    try:
-        await db.commit()
-        return {"message": "Asignación retirada"}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(500, f"Error al eliminar: {str(e)}")
+    return {"message": "Sesión liberada completamente del horario"}
 
 
 
